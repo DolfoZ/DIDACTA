@@ -1,0 +1,12 @@
+hmLoadTopic({
+hmKeywords:"",
+hmTitle:"US Projectile, 155mm HE, Mk 4",
+hmDescription:"Description No description available. Functioning No information about functioning. See Also PD, M46 PD, M47 Source(s) TM 9-1904, Ammunition Inspection Guide (1944)",
+hmPrevLink:"projectile_-155mm-he_-mk-3.html",
+hmNextLink:"projectile_-155mm-heat-guided_.html",
+hmParentLink:"_usd.html",
+hmBreadCrumbs:"<a href=\"_ord.html\">Ordnance<\/a> &gt; <a href=\"_projo.html\">Projectiles<\/a> &gt; <a href=\"_usd.html\">United States<\/a>",
+hmTitlePath:"Ordnance > Projectiles > United States > Projectile, 155mm HE, Mk 4",
+hmHeader:"<h1 class=\"p_Heading1\" style=\"page-break-after: avoid;\"><span class=\"f_Heading1\">US Projectile, 155mm HE, Mk 4<\/span><\/h1>\n\r",
+hmBody:"<p class=\"p_Normal\" style=\"text-align: center;\">&nbsp;<\/p>\n\r<div class=\"p_Normal\" style=\"text-align: center;\"><div style=\"margin:0 auto 0 auto;width:100%;max-width:375px;height:auto;\"><img alt=\"no-image\" style=\"width:100%;height:auto;border:none\" src=\".\/images\/no-image.jpg\"\/><\/div><\/div>\n\r<h2 class=\"p_Heading2\" style=\"page-break-after: avoid; border-top: none; border-right: none; border-left: none;\"><span class=\"f_Heading2\">Description<\/span><\/h2>\n\r<p class=\"p_BodyTextIndented\"><span class=\"f_BodyTextIndented\">No description available.<\/span><\/p>\n\r<h2 class=\"p_Heading2\" style=\"page-break-after: avoid; border-top: none; border-right: none; border-left: none;\"><span class=\"f_Heading2\">Functioning<\/span><\/h2>\n\r<p class=\"p_BodyTextIndented\"><span class=\"f_BodyTextIndented\">No information about functioning.<\/span><\/p>\n\r<h2 class=\"p_Heading2\" style=\"page-break-after: avoid; border-top: none; border-right: none; border-left: none;\"><span class=\"f_Heading2\">See Also<\/span><\/h2>\n\r<p class=\"p_BodyTextIndented\"><span class=\"f_BodyTextIndented\"><a href=\"pd_-m46.html\" class=\"topiclink\">PD, M46<\/a><\/span><\/p>\n\r<p class=\"p_BodyTextIndented\"><span class=\"f_BodyTextIndented\"><a href=\"pd_-m47.html\" class=\"topiclink\">PD, M47<\/a><\/span><\/p>\n\r<h2 class=\"p_Heading2\" style=\"page-break-after: avoid; border-top: none; border-right: none; border-left: none;\"><span class=\"f_Heading2\">Source(s)<\/span><\/h2>\n\r<p class=\"p_BodyTextIndented\"><span class=\"f_BodyTextIndented\"><a href=\"pdf\/TM-9-1904.pdf#page=526\" target=\"_blank\" onclick=\"return HMTrackTopiclink(this);\" class=\"weblink\">TM 9-1904, Ammunition Inspection Guide (1944)<\/a><\/span><\/p>\n\r<p class=\"p_Normal\">&nbsp;<\/p>\n\r"
+})

@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Biblioteca de Artillería — 105mm & 155mm</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    overflow: hidden;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+    background: #0a1628;
+    height: 100vh;
+    width: 100vw;
+    user-select: none;
+  }
+
+  /* === OCEAN CANVAS === */
+  canvas#ocean {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 0;
+  }
+
+  /* === HEADER === */
+  .header {
+    position: relative;
+    z-index: 10;
+    text-align: center;
+    padding: 24px 0 8px;
+  }
+  .header h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    color: #e0f0ff;
+    text-shadow: 0 0 20px rgba(100, 200, 255, 0.5);
+    letter-spacing: 2px;
+  }
+  .header p {
+    color: rgba(150, 210, 255, 0.6);
+    font-size: 0.85rem;
+    margin-top: 4px;
+    letter-spacing: 1px;
+  }
+
+  /* === CAROUSEL CONTAINER === */
+  .carousel-wrap {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: calc(100vh - 120px);
+    perspective: 1200px;
+  }
+
+  .carousel {
+    position: relative;
+    width: 320px;
+    height: 420px;
+    transform-style: preserve-3d;
+    transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  /* === CARD === */
+  .card {
+    position: absolute;
+    width: 280px;
+    height: 380px;
+    left: 50%;
+    top: 50%;
+    margin-left: -140px;
+    margin-top: -190px;
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(15, 35, 65, 0.92), rgba(8, 20, 45, 0.95));
+    border: 1px solid rgba(80, 160, 255, 0.2);
+    box-shadow:
+      0 8px 32px rgba(0, 0, 0, 0.5),
+      0 0 60px rgba(50, 130, 220, 0.08),
+      inset 0 1px 0 rgba(120, 200, 255, 0.1);
+    backdrop-filter: blur(12px);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    transition: box-shadow 0.4s, border-color 0.4s;
+    backface-visibility: hidden;
+  }
+
+  .card:hover {
+    border-color: rgba(100, 200, 255, 0.5);
+    box-shadow:
+      0 12px 48px rgba(0, 0, 0, 0.6),
+      0 0 80px rgba(60, 150, 255, 0.15);
+  }
+
+  .card .icon {
+    width: 80px;
+    height: 100px;
+    margin: 16px 0;
+    background: linear-gradient(135deg, #1a3a5c, #0d2240);
+    border-radius: 8px;
+    border: 1px solid rgba(80, 160, 255, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card .icon::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: linear-gradient(45deg, transparent 40%, rgba(100, 200, 255, 0.06) 50%, transparent 60%);
+    animation: iconShine 4s ease-in-out infinite;
+  }
+
+  @keyframes iconShine {
+    0%, 100% { transform: translateX(-100%) rotate(45deg); }
+    50% { transform: translateX(100%) rotate(45deg); }
+  }
+
+  .card .title {
+    color: #c0e0ff;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-align: center;
+    margin: 12px 0 6px;
+    line-height: 1.3;
+    letter-spacing: 0.5px;
+  }
+
+  .card .desc {
+    color: rgba(150, 195, 240, 0.6);
+    font-size: 0.72rem;
+    text-align: center;
+    line-height: 1.4;
+    flex: 1;
+  }
+
+  .card .badge {
+    margin-top: auto;
+    padding: 6px 16px;
+    border-radius: 20px;
+    background: linear-gradient(135deg, rgba(40, 120, 200, 0.3), rgba(30, 90, 170, 0.2));
+    border: 1px solid rgba(80, 160, 255, 0.25);
+    color: rgba(140, 200, 255, 0.8);
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.3s;
+  }
+
+  .card:hover .badge {
+    background: linear-gradient(135deg, rgba(50, 140, 230, 0.5), rgba(40, 110, 200, 0.4));
+    color: #e0f0ff;
+    box-shadow: 0 0 20px rgba(60, 150, 255, 0.2);
+  }
+
+  /* === NAV ARROWS === */
+  .nav-btn {
+    position: relative;
+    z-index: 20;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(15, 35, 65, 0.7);
+    border: 1px solid rgba(80, 160, 255, 0.25);
+    color: rgba(140, 200, 255, 0.8);
+    font-size: 1.4rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 24px;
+    transition: all 0.3s;
+    backdrop-filter: blur(8px);
+  }
+
+  .nav-btn:hover {
+    background: rgba(30, 70, 130, 0.6);
+    border-color: rgba(100, 200, 255, 0.5);
+    color: #e0f0ff;
+    box-shadow: 0 0 30px rgba(60, 150, 255, 0.2);
+    transform: scale(1.08);
+  }
+
+  /* === DOTS === */
+  .dots {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    gap: 10px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(80, 160, 255, 0.2);
+    border: 1px solid rgba(80, 160, 255, 0.3);
+    cursor: pointer;
+    transition: all 0.3s;
+  }
+  .dot.active {
+    background: rgba(80, 180, 255, 0.7);
+    box-shadow: 0 0 12px rgba(80, 180, 255, 0.5);
+    transform: scale(1.3);
+  }
+
+  /* === WAVE COLLISION EFFECT === */
+  .wave-splash {
+    position: fixed;
+    pointer-events: none;
+    z-index: 5;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(100, 220, 255, 0.3), transparent 70%);
+    animation: splash 1.2s ease-out forwards;
+  }
+
+  @keyframes splash {
+    0% { transform: scale(0); opacity: 1; }
+    100% { transform: scale(3); opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="ocean"></canvas>
+
+<div class="header">
+  <h1>⚔ BIBLIOTECA DE ARTILLERÍA</h1>
+  <p>Manuales Técnicos — Obús 105mm & 155mm</p>
+</div>
+
+<div class="carousel-wrap">
+  <button class="nav-btn" id="prevBtn">◀</button>
+  <div class="carousel" id="carousel"></div>
+  <button class="nav-btn" id="nextBtn">▶</button>
+</div>
+
+<div class="dots" id="dots"></div>
+
+<script>
+// === PDF DATA ===
+const pdfs = [
+  { file: 'pdf/TM-43-0001-28-1994.pdf', title: 'TM 43-0001-28 (1994)', desc: 'Data Sheets — Munición de Artillería. Referencia principal para cartuchos y proyectiles.', icon: '📘' },
+  { file: 'pdf/TM-43-0001-28-1977.pdf', title: 'TM 43-0001-28 (1977)', desc: 'Data Sheets — Munición de Artillería. Edición clásica con especificaciones completas.', icon: '📗' },
+  { file: 'pdf/TM-9-1300-203-1967.pdf', title: 'TM 9-1300-203 (1967)', desc: 'Artillery Ammunition. Manual técnico de munición de artillería de campaña.', icon: '📕' },
+  { file: 'pdf/TM-9-1300-203-1960.pdf', title: 'TM 9-1300-203 (1960)', desc: 'Artillery Ammunition. Edición anterior con fundamentos doctrinales.', icon: '📙' },
+  { file: 'pdf/TM-9-1904.pdf', title: 'TM 9-1904', desc: 'Ammunition Inspection Guide. Procedimientos de inspección y clasificación.', icon: '🔍' },
+  { file: 'pdf/TM-9-1300-214-1984.pdf', title: 'TM 9-1300-214 (1984)', desc: 'Military Explosives. Cargas propulsoras, cebos y explosivos militares.', icon: '💥' },
+  { file: 'pdf/TM-9-1385-51.pdf', title: 'TM 9-1385-51', desc: 'Fuzes. Espoletas de artillería: impacto, proximidad, tiempo mecánico.', icon: '⚙' },
+  { file: 'pdf/USNBD-Army-Projectiles-1943.pdf', title: 'USNBD Projectiles (1943)', desc: 'Navy Bomb Disposal — Proyectiles del Ejército. Referencia histórica.', icon: '🎯' },
+  { file: 'pdf/ordnance-and-munitions.pdf', title: 'Ordnance & Munitions', desc: 'Referencia general de municiones y material de guerra.', icon: '📖' },
+  { file: 'pdf/MIL-STD-444.pdf', title: 'MIL-STD-444', desc: 'Estándar militar de nomenclatura y clasificación de munición.', icon: '📋' }
+];
+
+let current = 0;
+const total = pdfs.length;
+const carousel = document.getElementById('carousel');
+const dotsWrap = document.getElementById('dots');
+
+// Build cards
+pdfs.forEach((pdf, i) => {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="icon">${pdf.icon}</div>
+    <div class="title">${pdf.title}</div>
+    <div class="desc">${pdf.desc}</div>
+    <div class="badge">Abrir Manual</div>
+  `;
+  card.addEventListener('click', () => window.open(pdf.file, '_blank'));
+  carousel.appendChild(card);
+
+  const dot = document.createElement('div');
+  dot.className = 'dot';
+  dot.addEventListener('click', () => goTo(i));
+  dotsWrap.appendChild(dot);
+});
+
+function updateCarousel() {
+  const cards = carousel.querySelectorAll('.card');
+  const dots = dotsWrap.querySelectorAll('.dot');
+
+  cards.forEach((card, i) => {
+    const offset = i - current;
+    const absOff = Math.abs(offset);
+    const z = 100 - absOff * 30;
+    const x = offset * 220;
+    const rotY = -offset * 35;
+    const scale = Math.max(0.6, 1 - absOff * 0.15);
+    const opacity = Math.max(0, 1 - absOff * 0.3);
+
+    card.style.transform = `translateX(${x}px) translateZ(${z}px) rotateY(${rotY}deg) scale(${scale})`;
+    card.style.opacity = opacity;
+    card.style.zIndex = 100 - absOff;
+    card.style.pointerEvents = absOff <= 1 ? 'auto' : 'none';
+  });
+
+  dots.forEach((d, i) => d.classList.toggle('active', i === current));
+
+  // Trigger wave splash on card edges
+  triggerSplash();
+}
+
+function goTo(idx) {
+  current = Math.max(0, Math.min(total - 1, idx));
+  updateCarousel();
+}
+
+document.getElementById('prevBtn').addEventListener('click', () => goTo(current - 1));
+document.getElementById('nextBtn').addEventListener('click', () => goTo(current + 1));
+
+// Keyboard nav
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft') goTo(current - 1);
+  if (e.key === 'ArrowRight') goTo(current + 1);
+});
+
+// Touch swipe
+let touchStartX = 0;
+document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', (e) => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dx) > 50) goTo(current + (dx < 0 ? 1 : -1));
+});
+
+// Mouse wheel
+document.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  goTo(current + (e.deltaY > 0 ? 1 : -1));
+}, { passive: false });
+
+updateCarousel();
+
+// === WAVE SPLASH ON CARD EDGES ===
+function triggerSplash() {
+  const centerCard = carousel.querySelectorAll('.card')[current];
+  if (!centerCard) return;
+  const rect = centerCard.getBoundingClientRect();
+
+  // Random splash near card edges
+  if (Math.random() > 0.6) {
+    const splash = document.createElement('div');
+    splash.className = 'wave-splash';
+    const side = Math.random() > 0.5 ? rect.left - 10 : rect.right - 10;
+    const y = rect.top + Math.random() * rect.height;
+    splash.style.left = side + 'px';
+    splash.style.top = y + 'px';
+    splash.style.width = '40px';
+    splash.style.height = '40px';
+    document.body.appendChild(splash);
+    setTimeout(() => splash.remove(), 1200);
+  }
+}
+
+// === OCEAN + PLANKTON + WAVES ===
+const canvas = document.getElementById('ocean');
+const ctx = canvas.getContext('2d');
+let W, H;
+
+function resize() {
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// Plankton particles
+const plankton = [];
+const PLANKTON_COUNT = 120;
+
+for (let i = 0; i < PLANKTON_COUNT; i++) {
+  plankton.push({
+    x: Math.random() * W,
+    y: Math.random() * H,
+    r: Math.random() * 2.5 + 0.5,
+    vx: (Math.random() - 0.5) * 0.4,
+    vy: (Math.random() - 0.5) * 0.3,
+    pulse: Math.random() * Math.PI * 2,
+    pulseSpeed: 0.01 + Math.random() * 0.03,
+    hue: 180 + Math.random() * 40,
+    brightness: 0.3 + Math.random() * 0.7
+  });
+}
+
+// Wave parameters
+const waves = [
+  { amp: 25, freq: 0.008, speed: 0.015, y: 0.55, color: 'rgba(15, 50, 100, 0.4)' },
+  { amp: 18, freq: 0.012, speed: 0.022, y: 0.60, color: 'rgba(10, 40, 85, 0.5)' },
+  { amp: 30, freq: 0.006, speed: 0.010, y: 0.65, color: 'rgba(8, 30, 70, 0.6)' },
+  { amp: 15, freq: 0.015, speed: 0.028, y: 0.70, color: 'rgba(5, 25, 60, 0.7)' },
+  { amp: 22, freq: 0.010, speed: 0.018, y: 0.75, color: 'rgba(3, 18, 50, 0.8)' }
+];
+
+let time = 0;
+
+// Card collision detection for waves
+function getCardRects() {
+  const cards = carousel.querySelectorAll('.card');
+  const rects = [];
+  cards.forEach((card, i) => {
+    if (Math.abs(i - current) <= 2) {
+      rects.push(card.getBoundingClientRect());
+    }
+  });
+  return rects;
+}
+
+// Splash particles from wave-card collision
+const splashParticles = [];
+
+function addSplashParticles(x, y) {
+  for (let i = 0; i < 3; i++) {
+    splashParticles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 3,
+      vy: -Math.random() * 4 - 1,
+      life: 1,
+      r: Math.random() * 3 + 1,
+      hue: 190 + Math.random() * 30
+    });
+  }
+}
+
+function animate() {
+  time += 1;
+  ctx.clearRect(0, 0, W, H);
+
+  // Deep ocean gradient
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#0a1628');
+  grad.addColorStop(0.3, '#0c1e3a');
+  grad.addColorStop(0.6, '#0a2a4a');
+  grad.addColorStop(1, '#051525');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Subtle light rays from top
+  ctx.save();
+  ctx.globalAlpha = 0.03;
+  for (let i = 0; i < 5; i++) {
+    const rx = W * 0.2 + i * W * 0.15;
+    const rayGrad = ctx.createLinearGradient(rx, 0, rx + 80, H * 0.7);
+    rayGrad.addColorStop(0, 'rgba(100, 200, 255, 0.8)');
+    rayGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = rayGrad;
+    ctx.beginPath();
+    ctx.moveTo(rx - 20, 0);
+    ctx.lineTo(rx + 40 + Math.sin(time * 0.005 + i) * 20, H * 0.7);
+    ctx.lineTo(rx - 60 + Math.sin(time * 0.005 + i) * 20, H * 0.7);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Get card positions for collision
+  const cardRects = getCardRects();
+
+  // Draw waves with card collision
+  waves.forEach((wave) => {
+    ctx.beginPath();
+    const baseY = H * wave.y;
+    ctx.moveTo(0, H);
+
+    for (let x = 0; x <= W; x += 3) {
+      let wy = baseY + Math.sin(x * wave.freq + time * wave.speed) * wave.amp
+                      + Math.sin(x * wave.freq * 1.5 + time * wave.speed * 0.7) * wave.amp * 0.3;
+
+      // Card collision — wave deforms around cards
+      cardRects.forEach((rect) => {
+        const cardCx = rect.left + rect.width / 2;
+        const cardCy = rect.top + rect.height / 2;
+        const dx = x - cardCx;
+        const dy = wy - cardCy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const influence = rect.width * 0.8;
+
+        if (dist < influence) {
+          const force = (1 - dist / influence) * 25;
+          wy -= force * Math.sign(dy || 1);
+
+          // Splash on close contact
+          if (dist < influence * 0.4 && Math.random() > 0.97) {
+            addSplashParticles(x, wy);
+          }
+        }
+      });
+
+      ctx.lineTo(x, wy);
+    }
+
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fillStyle = wave.color;
+    ctx.fill();
+  });
+
+  // Draw plankton
+  plankton.forEach((p) => {
+    p.x += p.vx + Math.sin(time * 0.01 + p.pulse) * 0.2;
+    p.y += p.vy + Math.cos(time * 0.008 + p.pulse) * 0.15;
+    p.pulse += p.pulseSpeed;
+
+    // Wrap around
+    if (p.x < -10) p.x = W + 10;
+    if (p.x > W + 10) p.x = -10;
+    if (p.y < -10) p.y = H + 10;
+    if (p.y > H + 10) p.y = -10;
+
+    // Wave current push
+    const waveInfluence = Math.sin(p.x * 0.01 + time * 0.015) * 0.3;
+    p.x += waveInfluence;
+
+    const glow = (Math.sin(p.pulse) + 1) / 2;
+    const alpha = 0.15 + glow * p.brightness * 0.6;
+    const radius = p.r * (0.8 + glow * 0.4);
+
+    // Bioluminescent glow
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.3;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius * 4, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue}, 80%, 70%, 0.3)`;
+    ctx.fill();
+
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${p.hue}, 90%, 80%, 1)`;
+    ctx.fill();
+    ctx.restore();
+  });
+
+  // Splash particles
+  for (let i = splashParticles.length - 1; i >= 0; i--) {
+    const sp = splashParticles[i];
+    sp.x += sp.vx;
+    sp.y += sp.vy;
+    sp.vy += 0.1;
+    sp.life -= 0.02;
+
+    if (sp.life <= 0) {
+      splashParticles.splice(i, 1);
+      continue;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = sp.life * 0.7;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${sp.hue}, 80%, 75%, 1)`;
+    ctx.fill();
+
+    ctx.globalAlpha = sp.life * 0.3;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, sp.r * 3, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${sp.hue}, 80%, 70%, 0.4)`;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  requestAnimationFrame(animate);
+}
+
+animate();
+</script>
+</body>
+</html>
