@@ -1,0 +1,24 @@
+# /etc/systemd/system/ares-ballistic-mcp.service
+cat > /etc/systemd/system/ares-ballistic-mcp.service << 'EOF'
+[Unit]
+Description=ARES Ballistic MCP Master Server
+Documentation=https://ares.local/docs
+After=network.target postgresql.service
+Wants=ares-logistics-mcp.service
+
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/mcp
+Environment=PYTHONUNBUFFERED=1
+Environment=LATITUD_OPERATIVA=14.08
+Environment=LOG_AUDIT_PATH=/opt/ares/logs/ares_audit.jsonl
+ExecStart=/opt/ares/venv/bin/python /opt/ares/mcp/ares_ballistic_mcp_master.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF

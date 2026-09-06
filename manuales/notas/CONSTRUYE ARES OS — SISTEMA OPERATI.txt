@@ -1,0 +1,291 @@
+CONSTRUYE ARES OS — SISTEMA OPERATIVO WEB COMPLETO
+
+═══ INSTRUCCIÓN PRINCIPAL ═══
+
+Build a web-based Linux replica called ARES OS with 50+ fully functional apps. This must be a REAL operating system, not a simple webpage. Use DaedalOS, Puter, and ProzillaOS as architectural references. Everything must work: real terminal, real file system, real applications, real communication systems, real ballistic laboratory, real database, real authentication. No placeholders. No simulations. No Docker. All open source.
+
+═══ ARQUITECTURA GENERAL ═══
+
+Frontend: React 18 + TypeScript + TailwindCSS + Framer Motion + Zustand + React Three Fiber
+Backend: Node.js + Express + WebSocket + Python FastAPI (for DREV)
+Database: PostgreSQL 15
+Services: systemd (NO Docker, NO containers unless Podman)
+OS Aesthetics: Garuda Linux / Deepin style — dark theme, #0d1117 background, #2dd4bf accent, blur panels, rounded corners 12px, smooth Framer Motion animations
+Fonts: Share Tech Mono (terminal/clock), Rajdhani (titles), Inter (UI), JetBrains Mono (code)
+
+═══ SISTEMA DE ARCHIVOS VIRTUAL ═══
+
+Implement a full VFS using ZenFS (https://github.com/zen-fs/core) with multi-backend:
+- / → IndexedDB (persistent)
+- /tmp → InMemory (volatile)
+- /mnt/backend → Fetch backend (REST sync)
+- Sync with backend via wsfs library
+- Structure: /home, /etc, /opt, /var, /mnt
+- Include default config files: /etc/ares/os.conf, /opt/drev/config.json
+- GUI file manager app using this VFS (browse, create, delete, rename files and folders)
+
+═══ TERMINAL REAL ═══
+
+Integrate xterm.js + wetty for a REAL Linux terminal:
+- Frontend: xterm.js with ARES theme (dark background, #2dd4bf cursor, JetBrains Mono)
+- Backend: wetty WebSocket proxy to real bash shell on the host
+- The terminal must be a fully functional bash shell, not simulated
+- Include welcome banner with ARES ASCII art
+- Support for real Linux commands (ssh, htop if installed, git, python, etc.)
+
+═══ SISTEMA DE COMUNICACIONES PTT (TIPO ZELLO) ═══
+
+IMPORTANT: Clone and integrate the open source Mumble-web client from https://github.com/Johni0702/mumble-web
+- Deploy Murmur server (apt install mumble-server) on the host
+- Configure channels: ARES-NET, 1er-Batallon-Zambrano, 2do-Batallon-Pinalejo, 4to-Batallon-Choluteca, Coordinacion-Fuego, Logistica
+- Enable TLS encryption for signaling, Opus codec for voice
+- Create a React component that embeds mumble-web in an iframe within ARES OS
+- Push-to-Talk: spacebar key (when not in input field) AND on-screen button "MANTENER PARA HABLAR"
+- The component must show channel list, connection status, PTT indicator, and volume control
+- Integration with ARES JWT authentication
+
+Also build a "Santa Bárbara Communications System" as a separate React app within ARES OS:
+- Three-panel layout: left (unit hierarchy + battery status), center (tactical MGRS grid map), right (secure terminal)
+- Units: CP (EAGLE-06), FO1 (COBRA-11), FO2 (RAVEN-03), BAT1 (THUNDER-01, 155mm M777), BAT2 (THUNDER-02, 120mm L16), LOG (PACK-01)
+- Click on tactical grid to designate targets (FO role only)
+- Fire mission queue with approve/reject flow (CP role)
+- Terminal with real-time encrypted messaging between units
+- Simulated jamming events with visual alerts
+- Channel selector (CP-NET, FO-CHAN, FIRE-NET, LOG-NET)
+- Encryption selector (AES-256-GCM, CHACHA20-POLY1305, Plain Text)
+- Dark tactical theme with scanlines overlay
+
+═══ LABORATORIO BALÍSTICO DREV ═══
+
+I am attaching Python files for the DREV ballistic laboratory. Your tasks:
+1. Analyze all Python files for errors, missing imports, or incompatibilities
+2. Fix any problems WITHOUT changing the calculation logic
+3. Wrap the corrected code in a FastAPI REST API with these endpoints:
+   - POST /api/drev/simulate — runs trajectory simulation
+   - POST /api/drev/firing-table — generates firing tables
+   - GET /api/drev/munitions — lists available munitions
+4. Build a NEW React UI with military-grade design:
+   - Left sidebar: projectile selector (from JSON files: 155mm HE M107, HERA M549A1, ILLUM M485, 105mm HE M1), charge selector (WB M4A2, M119A2, M203, M67), elevation input, environmental params (wind, temperature, humidity, latitude for Coriolis)
+   - Center: trajectory chart (Chart.js) with interactive draggable point showing time/range/altitude/speed/Mach at any position
+   - Right panel: results display (range, deflection, time of flight, max altitude, impact velocity, Mach number), explanation text
+   - Additional tabs: Data Table, Formula Editor (range/time/deflection/altitude coefficients), Audit (query explanation of calculations), Firing Table Generator (NATO format), Mission Planner (find QE for target range), 3D Correction Simulator
+   - Fuze selector (PDA/TIA) with time setting for TIA
+   - Dark theme matching ARES OS aesthetic
+
+Physics engine must include (implement in the backend Python):
+- USSA 1976 atmosphere model with humidity correction (Buck equation)
+- WGS84 gravity model
+- Coriolis effect
+- G7 drag table interpolation (McCoy)
+- Magnus effect (optional, toggle)
+- Wind ballistic effect
+- RK4/DOP853 integration
+- Bisection algorithm for inverse problem (find QE from range)
+- Validation against official firing tables (FT 155-AM-2, FT 105-H-6)
+- Spin drift calculation
+
+Munitions database (from TM 43-0001-28):
+- 155mm: HE M107 (43.2 kg, BC 0.185), HERA M549A1 (43.5 kg, rocket-assisted, BC 0.210), ILLUM M485 (45.4 kg, BC 0.165), RAAM M718 (47.0 kg, BC 0.170)
+- 105mm: HE M1 (14.97 kg, BC 0.150), ILLUM M314 (14.77 kg), SMOKE HC M84 (14.5 kg)
+- Propelling charges: GB M3A1 (375 m/s), WB M4A2 (565 m/s), WB M119A2 (685 m/s), RB M203 (827 m/s), M67 Ch7 (472 m/s)
+
+═══ MCP SERVERS (IA INTEGRATION) ═══
+
+Build two MCP (Model Context Protocol) servers in Python that run as systemd services:
+
+## MCP Ballistic Master Server
+Create a single Python file that unifies:
+- Knowledge base: projectiles, charges, G7 table, validation rules, manual references (TM/FT/FM/STANAG)
+- Daemons: async calculation queue, table cache with TTL, audit logging (JSONL), telemetry buffer
+- Agents: intent classification, doctrinal validation, RAG over military manuals, tactical routing
+- Physics engine: USSA atmosphere, WGS84 gravity, Coriolis, G7 interpolation, RK4 integration, bisection
+- MCP protocol: expose tools (solve_fire_mission, generate_ft_table, validate_load, query_drev_manual) and resources (ares://db/projectiles, ares://db/charges, ares://manuals/index) and prompts (plan_fire_mission)
+- Transport: stdio for MCP clients, but also bridge to HTTP/WebSocket for the React frontend
+
+## MCP Logistics Server
+Create a Python file that provides tools for artillery logistics:
+- list_battalions, create_battalion, list_personnel, assign_personnel
+- list_artillery, update_artillery_status
+- check_inventory, adjust_inventory
+- create_fire_mission, update_mission_status
+- validate_mission_feasibility, generate_battalion_report
+- Database: PostgreSQL with schema for batallones, personal, obuses, municiones, cargas_propulsoras, vehiculos, misiones_fuego
+
+═══ SISTEMA LOGÍSTICO DE ARTILLERÍA (3 BATALLONES REALES) ═══
+
+Build a logistics management React app connected to the PostgreSQL database:
+- Dashboard with 3 battalion cards:
+  * 1er Batallón de Artillería de Campaña — Zambrano, Francisco Morazán
+  * 2do Batallón de Artillería de Campaña — Pinalejo, Santa Bárbara
+  * 4to Batallón de Artillería de Campaña — Choluteca, Francisco Morazán
+- Personnel management: CRUD with grades (Coronel, Teniente Coronel, Sargento Mayor, Cabo, Soldado) and roles (Comandante, OficialEnlace, JefePieza, Artillero, Conductor, Logistica)
+- Artillery pieces: M198 155mm, M102 105mm with status (operativo, mantenimiento, fuera_servicio)
+- Ammunition inventory: by type, caliber, lot number, quantity, minimum threshold, storage temperature
+- Vehicle fleet management
+- Fire mission tracking with status flow (pendiente → aprobada → ejecutando → completada/rechazada)
+- Pre-loaded seed data for all 3 battalions
+
+═══ PROXMOX CONSOLE ═══
+
+Build a Proxmox VE console app using the proxmox-api TypeScript library (https://github.com/UrielCh/proxmox-api):
+- Connect to Proxmox cluster at 192.168.88.1 via API token authentication
+- Display cluster status, node list, VM/CT list with status (running/stopped/paused)
+- Show CPU, RAM, uptime for each VM
+- Allow start/stop actions on VMs
+- Update every 10 seconds via polling
+- Dark theme matching ARES OS
+
+═══ GHIDRA INTEGRATION ═══
+
+Integrate Ghidra (NSA reverse engineering framework) into ARES OS:
+- Install Ghidra 11.3 headless on the host
+- Integrate Ghidraaas (https://github.com/Cisco-Talos/Ghidraaas) as REST API
+- Integrate GhidraMCP (https://github.com/LaurieWired/GhidraMCP) for LLM tool calling
+- Build a React component that allows uploading binary files for decompilation
+- Display function list and decompiled C code from Ghidra analysis
+
+═══ PROSAS APLICACIONES (50+ TOTAL) ═══
+
+Build ALL of these as functional React components integrated into the ARES OS window manager. Every app must work before appearing in the menu.
+
+SYSTEM (6): Terminal, File Manager, Settings, System Monitor, Process Manager, Package Manager
+BALLISTICS (4): DREV Lab, DREV 3D Simulator, Firing Tables, GENESYX-DREV IA Assistant
+COMMUNICATIONS (3): Santa Bárbara Comms, Mumble PTT, Tactical Chat
+LOGISTICS (3): Logistics Dashboard, Inventory Control, Personnel Management
+DEVELOPMENT (5): VS Code Server (code-server iframe), Ghidra SRE, Hoppscotch API Client, Git Client, Node.js Environment
+SECURITY (4): Proxmox Console, Firewall (ufw/nftables UI), VPN WireGuard, Password Manager (Bitwarden iframe)
+PRODUCTIVITY (10): Text Editor (Monaco Editor), Calculator, Calendar, Notes (Markdown), Browser (Firefox via KasmVNC), Contacts, Task Manager, Spreadsheet, Presentation, Email Client (Roundcube iframe)
+MULTIMEDIA (4): Image Viewer, Media Player, Voice Recorder, Audio Editor
+UTILITIES (5): Unit Converter, Manual DREV Viewer, Report Generator (SITREP/SPOTREP/LOGREP/MEDEVAC), Weather Station, World Clock (military timezones)
+
+Also build GENESYX-DREV IA Assistant as a React app:
+- Chat interface with the MCP Ballistic server
+- Commands: /calcular, /validar, /config, /conocimiento, /estado, /manual, /help
+- Display ballistic simulation results in formatted cards
+- Show doctrinal validation warnings
+- Integrate with the DREV knowledge base for RAG responses
+
+═══ GESTOR DE VENTANAS (LIKE LINUX DESKTOP) ═══
+
+Implement a complete window manager:
+- react-rnd for drag and resize
+- Zustand for global window state (open, close, minimize, maximize, focus, z-index)
+- 40px window header with app title, circular control buttons (red=close, yellow=minimize, green=maximize)
+- Active window border glow with #2dd4bf
+- Minimize animation to taskbar
+- Maximize to fill viewport minus taskbar
+- Desktop icons (double-click to open)
+- Right-click context menu
+
+═══ PANTALLA DE LOGIN ═══
+
+Build a realistic boot sequence:
+1. Phase 1 (0-800ms): Blinking cursor in #2dd4bf
+2. Phase 2 (800ms-2s): Terminal lines stream in with [OK] prefixes:
+   [BOOT] ARES KERNEL v5.15.0-ares-sb #1 SMP
+   Loading essential drivers...
+   Mounting virtual filesystems...
+   Initializing Santa Barbara root partition...
+   Network interface eth0: 192.168.88.10/24
+   DNS resolver: 1.1.1.1
+   Proxmox VE cluster gateway: 192.168.88.1
+   rclone mount verified
+   VPN tunnel established (WireGuard)
+   System ready
+3. Phase 3: Radial flash, then login panel slides up
+4. Login form: username (default: Santa Barbara), password, role (Root/Admin/Operator/Guest), server toggle (local/remote)
+5. Bottom status: Network indicator, Proxmox GW: 192.168.88.1, DNS: 1.1.1.1, VPN: WireGuard Active
+6. On success: store JWT, transition to desktop with AnimatePresence
+
+═══ BARRA DE TAREAS Y MENÚ INICIO ═══
+
+Taskbar: 48px, fixed bottom, blur background, left (start button), center (running app icons with active indicator), right (network/VPN status, Proxmox status, clock in UTC 24h format, user avatar)
+
+Start Menu: 520px wide, slides up from taskbar, search bar with instant filtering, pinned apps grid, categorized app list (Sistema, Balística, Comunicaciones, Logística, Desarrollo, Seguridad, Productividad, Multimedia, Utilidades), user info, power options
+
+═══ SEGURIDAD Y AUTENTICACIÓN ═══
+
+- JWT authentication with bcrypt password hashing
+- PostgreSQL users table with roles: root, admin, operator, guest
+- Role-based access control middleware
+- Default root user: Santa Barbara (password: SantaBarbara2026)
+- TLS/SSL for all connections
+- WireGuard VPN integration with wg-easy web UI
+- rclone configuration panel
+- Proxmox connection via API tokens
+
+═══ INSTALACIÓN (install.sh) ═══
+
+Create a single bash script that installs EVERYTHING on a clean Ubuntu 22.04 or Arch Linux server:
+1. System dependencies
+2. PostgreSQL setup with databases and schemas
+3. Python venv with all dependencies
+4. Node.js backend
+5. MCP Ballistic server (systemd service)
+6. MCP Logistics server (systemd service)
+7. Murmur Mumble server
+8. Mumble-web (clone from GitHub, npm install, npm build)
+9. FileBrowser (Go binary)
+10. Ghidra + Ghidraaas + GhidraMCP
+11. WireGuard
+12. Nginx reverse proxy with all routes configured
+13. rclone configuration
+14. All systemd services enabled and started
+15. SSL certificates (self-signed for local development)
+
+═══ REGLAS ABSOLUTAS ═══
+
+1. PROHIBIDO usar Docker. Todo se instala nativamente con scripts bash + systemd.
+2. PROHIBIDOS los placeholders. Cada app debe funcionar antes de aparecer en el menú.
+3. PROHIBIDO simular funcionalidad. La terminal debe ser real, el sistema de archivos debe persistir, las apps deben ejecutar código real.
+4. TODO el software debe ser open source (MIT, GPL, Apache, BSD). Nada propietario.
+5. NO modificar la lógica de cálculo del laboratorio DREV, solo reparar errores de importación o sintaxis.
+6. La interfaz debe ser hermosa, profesional, estilo Deepin/Garuda. Nada de "interfaces raras o feas".
+7. Usar nombres originales para las aplicaciones, siguiendo la línea del OS pero con identidad propia.
+8. El sistema debe ser un sistema operativo real, no una página web con iconos.
+9. Las 50+ aplicaciones deben estar en el registro central (src/apps/registry.ts) con lazy loading.
+10. Los MCP servers deben funcionar como servicios systemd reales, no como procesos efímeros.
+
+═══ REPOSITORIOS OPEN SOURCE A INTEGRAR ═══
+
+- ZenFS: https://github.com/zen-fs/core (VFS)
+- Mumble-web: https://github.com/Johni0702/mumble-web (PTT client)
+- Ghidra: https://github.com/NationalSecurityAgency/ghidra (SRE framework)
+- Ghidraaas: https://github.com/Cisco-Talos/Ghidraaas (REST API)
+- GhidraMCP: https://github.com/LaurieWired/GhidraMCP (MCP server)
+- Proxmox-api: https://github.com/UrielCh/proxmox-api (TypeScript SDK)
+- FileBrowser: https://github.com/filebrowser/filebrowser (web file manager)
+- xterm.js: for terminal rendering
+- Chart.js: for ballistic trajectory graphs
+- React Three Fiber: for 3D trajectory visualization
+- Monaco Editor: for code editor
+- Excalidraw: for whiteboard
+
+═══ ENTREGABLES ═══
+
+1. Complete Git repository with ALL source code
+2. install.sh script that deploys everything
+3. Documentation in Spanish: installation guide, user manual, development guide
+4. ARES OS accessible at https://localhost:443 or http://localhost:3000
+5. All 50+ apps functional
+6. DREV lab with real ballistic calculations
+7. Santa Bárbara communications system with PTT
+8. Logistics system with 3 battalions pre-loaded
+9. Proxmox console showing real VMs
+10. CREDITS.md listing all open source libraries used
+
+═══ BUILD IN PHASES ═══
+
+Phase 1: Backend + PostgreSQL + authentication + terminal + VFS
+Phase 2: Desktop shell + window manager + taskbar + start menu + login screen
+Phase 3: DREV Lab + MCP Ballistic server + GENESYX IA
+Phase 4: Santa Bárbara Comms + Mumble PTT
+Phase 5: Logistics system + MCP Logistics server
+Phase 6: Proxmox Console + Ghidra + VS Code
+Phase 7: All 50+ additional apps
+Phase 8: Security hardening + Nginx + WireGuard
+Phase 9: install.sh script + testing + documentation
+
+Report progress after each phase. Do not proceed to next phase until current phase is complete and verified.
+
+START BUILDING NOW. ARES OS MUST BE REAL.

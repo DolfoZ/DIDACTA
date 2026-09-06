@@ -1,0 +1,2762 @@
+sistema de comunicaciones 
+
+Un Sistema de Comunicación Interoperativo es exactamente el paso natural que transforma tu proyecto de un CRUD administrativo a una plataforma de mando y control (C2) real. La interoperabilidad no es solo "que las apps se hablen", es que sistemas heterogéneos, agencias diferentes y dispositivos diversos intercambien datos en tiempo real, con seguridad certificada y sin perder contexto.
+Aquí tienes una arquitectura técnica, estándares reales y un roadmap para hacerlo viable y profesional
+🌐 1. Visión del Sistema: C2-Comms Hub
+Plataforma de comunicación táctica interoperable que conecta:
+Comandantes (Centro de Operaciones / TOC)
+Soldados/Respondedores (Dispositivos móviles, radios IP, wearables)
+Mecánicos/Logística (Talleres, unidades de mantenimiento, IoT de vehículos)
+Activos (Vehículos, drones, sensores, cámaras)
+Agencias Externas (Policía, bomberos, ONGs, OTAN/aliados)
+Objetivo: Mensajería segura, voz/video over IP, telemetría en tiempo real, y reportes estandarizados que funcionen incluso con conectividad interm[Dispositivos de Campo] ←→ [Edge Gateway] ←→ [API Gateway / ZTNA]
+       │                       │                      │
+   (MQTT-SN)               (WebSocket)            (REST/gRPC)
+       │                       │                      │
+[IoT/Vehículos]         [Web/Móvil App]        [Servicios Core]
+                               │                      │
+                    ┌──────────┴──────────┐           │
+                    │   Message Broker    │←──────────┘
+                    │  (Kafka / RabbitMQ) │
+                    └──────────┬──────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+   [Auth & Identity]    [GIS & Situational]   [Audit & Compliance]
+   (OAuth2/OIDC + RBAC) (PostGIS + WebSocket) (WORM Capas Clave:
+Capa
+Tecnología Real
+Función
+Transporte
+MQTT 5.0, WebSocket, SIP/WebRTC, gRPC
+Adaptación a ancho de banda variable (radio, 4G/5G, satélite)
+Enrutamiento
+Apache Kafka + Schema Registry
+Priorización de mensajes, dead-letter queues, replay de eventos
+Traducción
+Protocol Gateway (EDXL ↔ JSON ↔ XML)
+Normalización entre agencias con diferentes formatos
+Identidad
+Keycloak / Ory + OpenFGA
+Federación de identidad, ABAC dinámico, SSO cross-agency
+Almacenamiento
+PostgreSQL + PostGIS, TimescaleDB, Redis, MinIO
+Datos relacionales, telemetría temporal, caché, objetos/media
+📜 3. Estándares Reales de Interoperabilidad
+Estándar
+Uso Real
+Implementación Técnica
+EDXL-CAP
+Alertas de emergencia multicanal
+Payload JSON/XML con info/effect, area/polygon
+STANAG 4607/4586
+Datos tácticos militares/UAV
+Campos platform_id, lat/lon, status_code, fuel_state
+NIEM / JSON Schema
+Intercambio estructurado entre agencias
+Validación estricta con ajv, contratos versionados
+MQTT-SN
+Comunicaciones en baja energía/ancho de banda
+Clientes ligeros en radios/drones, QoS 1/2
+WebRTC + SIP
+Voz/video seguro sin servidores centrales
+libdatachannel, mediasoup, cifrado DTLS-SRTP
+OCF / oneM2M
+IoT interoperable
+Modelado de recursos /v1/vehicles/{id}/telemetry
+🔒 4. Seguridad & Cumplimiento (No negociable)
+Requisito
+Implementación Real
+Cifrado E2E
+Signal Protocol o MLS (Messaging Layer Security) para chat; DTLS-SRTP para voz
+Gestión de Claves
+HSM (AWS CloudHSM, YubiHSM, o softHSM2 en dev), rotación automática
+Control de Acceso
+Zero Trust + OPA (Open Policy Agent) para políticas ABAC dinámicas
+Auditoría
+Logs inmutables (WORM), watermarking de mensajes, trazabilidad completa
+Cumplimiento
+FIPS 140-2/3, ISO 27001, GDPR/LOPDGDD, STIGs militares
+Resistencia
+Store-and-forward, sync offline con CRDTs (Yjs/Automerge), resolución de conflictos
+️ 5. Funcionalidades Tangibles (Que lo hacen "real")
+Priorización de Mensajes
+PRIORITY: EMERGENCY → bypass queues, notificación push inmediata, replicación multi-nodo
+PRIORITY: ROUTINE → cola estándar, compresión, batch sync
+Situational Awareness Map
+Mapa táctico en tiempo real (Leaflet/Mapbox + WebSocket)
+Iconos dinámicos: Activo, Mantenimiento, 🔴 Crítico, ⚫ Offline
+Geofencing: alertas automáticas al entrar/salir de zonas operativas
+Push-to-Talk over IP (PoC)
+Canales de voz grupales con grabación bajo demanda
+Integración con radios P25/DMR vía gateways (Zetron, Motorola ASTRO)
+Reportes Estructurados Automáticos
+Plantillas: SITREP, SPOTREP, LOGREP, MEDEVAC
+Generación semi-automática con datos de telemetría + input manual
+Federación Cross-Agency
+SAML/OIDC trust federation con bomberos, policíTu Entidad Actual
+Equivalente en C2-Comms
+Cambio Técnico
+Commander
+Incident Commander / TOC Operator
+Añadir clearance_level, agency_id, radio_callsign
+Soldier
+Field Operative / First Responder
+Añadir device_id, last_ping, gps_coords, comm_channel
+Mechanic
+Logistics/Maintenance Unit
+Añadir certifications, tool_inventory, work_order_queue
+Vehicle
+IoT-enabled Tactical Asset
+Añadir telemetry_stream, can_bus_data, fault_codes, fuel_state
+JWT + RBAC
+Zero Trust + ABAC
+Migrar a OPA policies, añadir scope y cCapas Clave:
+Capa
+Tecnología Real
+Función
+Transporte
+MQTT 5.0, WebSocket, SIP/WebRTC, gRPC
+Adaptación a ancho de banda variable (radio, 4G/5G, satélite)
+Enrutamiento
+Apache Kafka + Schema Registry
+Priorización de mensajes, dead-letter queues, replay de eventos
+Traducción
+Protocol Gateway (EDXL ↔ JSON ↔ XML)
+Normalización entre agencias con diferentes formatos
+Identidad
+Keycloak / Ory + OpenFGA
+Federación de identidad, ABAC dinámico, SSO cross-agency
+Almacenamiento
+PostgreSQL + PostGIS, TimescaleDB, Redis, MinIO
+Datos relacionales, telemetría temporal, caché, objetos/media
+📜 3. Estándares Reales de Interoperabilidad
+Estándar
+Uso Real
+Implementación Técnica
+EDXL-CAP
+Alertas de emergencia multicanal
+Payload JSON/XML con info/effect, area/polygon
+STANAG 4607/4586
+Datos tácticos militares/UAV
+Campos platform_id, lat/lon, status_code, fuel_state
+NIEM / JSON Schema
+Intercambio estructurado entre agencias
+Validación estricta con ajv, contratos versionados
+MQTT-SN
+Comunicaciones en baja energía/ancho de banda
+Clientes ligeros en radios/drones, QoS 1/2
+WebRTC + SIP
+Voz/video seguro sin servidores centrales
+libdatachannel, mediasoup, cifrado DTLS-SRTP
+OCF / oneM2M
+IoT interoperable
+Modelado de recursos /v1/vehicles/{id}/telemetry
+🔒 4. Seguridad & Cumplimiento (No negociable)
+Requisito
+Implementación Real
+Cifrado E2E
+Signal Protocol o MLS (Messaging Layer Security) para chat; DTLS-SRTP para voz
+Gestión de Claves
+HSM (AWS CloudHSM, YubiHSM, o softHSM2 en dev), rotación automática
+Control de Acceso
+Zero Trust + OPA (Open Policy Agent) para políticas ABAC dinámicas
+Auditoría
+Logs inmutables (WORM), watermarking de mensajes, trazabilidad completa
+Cumplimiento
+FIPS 140-2/3, ISO 27001, GDPR/LOPDGDD, STIGs militares
+Resistencia
+Store-and-forward, sync offline con CRDTs (Yjs/Automerge), resolución de conflictos
+️ 5. Funcionalidades Tangibles (Que lo hacen "real")
+Priorización de Mensajes
+PRIORITY: EMERGENCY → bypass queues, notificación push inmediata, replicación multi-nodo
+PRIORITY: ROUTINE → cola estándar, compresión, batch sync
+Situational Awareness Map
+Mapa táctico en tiempo real (Leaflet/Mapbox + WebSocket)
+Iconos dinámicos: Activo, Mantenimiento, 🔴 Crítico, ⚫ Offline
+Geofencing: alertas automáticas al entrar/salir de zonas operativas
+Push-to-Talk over IP (PoC)
+Canales de voz grupales con grabación bajo demanda
+Integración con radios P25/DMR vía gateways (Zetron, Motorola ASTRO)
+Reportes Estructurados Automáticos
+Plantillas: SITREP, SPOTREP, LOGREP, MEDEVAC
+Generación semi-automática con datos de telemetría + input manual
+Federación Cross-Agency
+SAML/OIDC trust federation con bomberos, policí1. Soldado reporta "Vehículo #12 averiado" vía app móvil (WebSocket)
+2. Gateway traduce a EDXL-SitRep + STANAG 4607
+3. Kafka enruta: 
+   → GIS (actualiza mapa)
+   → Mecánico asignado (push notification + work order)
+   → Comando (dashboard alert)
+   → Audit log (WORM storage)
+4. Mecánico acepta, actualiza estado a "repair"
+5. Vehículo vuelve a "available" → notificación automática a unidad solicitantea, Cruz Roja
+Traducción automática de campos (vehicle_type ↔ unit_type)learance al tokena, Cruz Roja
+Traducción automática de campos (vehicle_type ↔ unit_type)Storage + OPA)itente.
+. </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+    document.getElementById('modalFooter').innerHTML = `
+        <button class="btn btn-ghost" onclick="closeModal()">Cerrar</button>
+    `;
+    openModal();
+}
+
+function assignVehicle(mechanicId, vehicleId) {
+    let assignments = DB.get('mechanic_vehicles');
+    
+    // Remove any existing assignment for this vehicle
+    assignments = assignments.filter(a => a.vehicle_id !== vehicleId);
+    
+    assignments.push({
+        mechanic_id: mechanicId,
+        vehicle_id: vehicleId,
+        assigned_at: new Date().toISOString()
+    });
+    DB.set('mechanic_vehicles', assignments);
+
+    // Update vehicle state and mechanic reference
+    let vehicles = DB.get('vehicles');
+    const idx = vehicles.findIndex(v => v.id === vehicleId);
+    if (idx !== -1) {
+        vehicles[idx].id_mechanic = mechanicId;
+        vehicles[idx].state = 'maintenance';
+        DB.set('vehicles', vehicles);
+    }
+
+    showToast('Vehículo asignado al mecánico', 'success');
+    closeModal();
+    renderContent('mechanics');
+    buildNavigation();
+}
+
+// --- MODAL ---
+function openModal() {
+    document.getElementById('modalOverlay').classList.add('active');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeModal(event) {
+    if (event && event.target !== event.currentTarget) return;
+    document.getElementById('modalOverlay').classList.remove('active');
+    document.body.style.overflow = '';
+}
+
+// --- TOAST NOTIFICATIONS ---
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// --- KEYBOARD SHORTCUT ---
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal();
+});
+
+// --- INIT ---
+init();
+</script>
+
+</body>
+</html>
+```encial de convertirse en una plataforma de negocios versátil y de alto impacto.ientar su desarrollo y marketing hacia los mercados de la logística, la infraestructura y los servicios de emergencia, este sistema tiene el potencial de convertirse en una plataforma de negocios versátil y de alto impacto.1. Soldado reporta "Vehículo #12 averiado" vía app móvil (WebSocket)
+2. Gateway traduce a EDXL-SitRep + STANAG 4607
+3. Kafka enruta: 
+   → GIS (actualiza mapa)
+   → Mecánico asignado (push notification + work order)
+   → Comando (dashboard alert)
+   → Audit log (WORM storage)
+4. Mecánico acepta, actualiza estado a "repair"
+5. Vehículo vuelve a "available" → notificación automática a unidad solFase
+Duración
+Entregables
+Stack Sugerido
+1. Core Messaging
+2-3 semanas
+Auth, RBAC, WebSocket chat, Kafka básico, PostgreSQL
+Node.js/Express, Socket.io, Kafka, JWT
+2. Real-Time & GIS
+3-4 semanas
+Mapa táctico, telemetría vehículos, store-and-forward
+PostGIS, Leaflet, MQTT, Redis, CRDTs
+3. Voz/Video & PoC
+4-5 semanas
+WebRTC channels, grabación, integración SIP
+mediasoup, libdatachannel, SIP.js
+4. Federación & Estándares
+4-6 semanas
+EDXL/CAP, OPA ABAC, SSO cross-agency, auditoría
+Keycloak, OPA, ajv, MinIO
+5. Hardening & Cert
+3-4 semanas
+Pen-testing, FIPS compliance, load testing, docs
+OWASP ZAP, Fase
+Duración
+Entregables
+Stack Sugerido
+1. Core Messaging
+2-3 semanas
+Auth, RBAC, WebSocket chat, Kafka básico, PostgreSQL
+Node.js/Express, Socket.io, Kafka, JWT
+2. Real-Time & GIS
+3-4 semanas
+Mapa táctico, telemetría vehículos, store-and-forward
+PostGIS, Leaflet, MQTT, Redis, CRDTs
+3. Voz/Video & PoC
+4-5 semanas
+WebRTC channels, grabación, integración SIP
+mediasoup, libdatachannel, SIP.js
+4. Federación & Estándares
+4-6 semanas
+EDXL/CAP, OPA ABAC, SSO cross-agency, auditoría
+Keycloak, OPA, ajv, MinIO
+5. Hardening & Cert
+3-4 semanas
+Pen-testing, FIPS compliance, load testing, docs
+OWASP ZAP, Categoría
+Herramienta
+Por qué
+Broker
+Apache Kafka o RabbitMQ
+Enrutamiento, prioridades, replay
+Auth
+Keycloak o Ory Kratos
+OIDC, SAML, federation, MFA
+Policy
+Open Policy Agent (OPA)
+ABAC dinámico, Zero Trust
+GIS
+PostGIS + PostgREST
+Geospatial queries, REST auto
+Real-Time
+Socket.io o µWebSockets.js
+Baja latencia, reconexión automática
+E2E Crypto
+libsignal o MLS-SDK
+Cifrado militar-grade
+Offline Sync
+Yjs o Automerge
+CRDTs para resolución de conflictos
+import MapboxMaps
+
+class TacticalMapView: UIView {
+    private var mapView: MapView!
+    
+    func addUnitMarker(unit: Unit, at coordinate: CLLocationCoordinate2D) {
+        let pointAnnotation = PointAnnotation(coordinate: coordinate)
+        pointAnnotation.iconImage = unit.type == .commander ? "commander-icon" :
+                                   unit.type == .observer ? "observer-icon" : "battery-icon"
+        mapView.annotations.add(pointAnnotation)
+    }
+    
+    func drawFireTrajectory(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
+        // Dibujar arco de trayectoria balística
+    }
+}
+API Docs
+OpenAPI 3.1 + Swagger
+Contratos vimport { Server } from 'socket.io';
+const io = new Server(server, { cors: { origin: '*' } });
+io.on('connection', (socket) => {
+  socket.on('join_channel', (channel) => socket.join(channel));
+  socket.on('send_message', (msg) => io.to(msg.channel).emit('new_message', msg));{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["type", "priority", "sender_id", "payload"],
+  "properties": {
+    "type": { "enum": ["sitrep", "logrep", "alert", "telemetry"] },
+    "priority": { "enum": ["emergency", "priority", "routine"] },
+    "sender_id": { "type": "string" },
+    "payload": { "type": "object"const token = jwt.sign({
+  id: user.id,
+  role: user.role,
+  clearance: user.clearance, // UNCLASSIFIED, CONFIDENTIAL, SECRET
+  agency: user.agency_id
+}, SECRET, { expiresIn: '1h```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SANTA BÁRBARA | Sistema de Comunicaciones de Artillería de Campaña</title>
+<style>
+:root {
+  --bg: #080a0f;
+  --panel: #0d1117;
+  --border: #1c2431;
+  --border-accent: #2a3a52;
+  --primary: #00ff9d;
+  --primary-dim: rgba(0, 255, 157, 0.15);
+  --warn: #ffaa00;
+  --warn-dim: rgba(255, 170, 0, 0.15);
+  --crit: #ff3b3b;
+  --crit-dim: rgba(255, 59, 59, 0.15);
+  --info: #00b4ff;
+  --info-dim: rgba(0, 180, 255, 0.15);
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --font-mono: 'Courier New', Consolas, monospace;
+  --font-ui: system-ui, -apple-system, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.scanlines {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 3px);
+  pointer-events: none; z-index: 9999;
+}
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5); z-index: 10;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo {
+  font-family: var(--font-mono); font-weight: 900; font-size: 20px; letter-spacing: 2px;
+  color: var(--primary); text-shadow: 0 0 8px var(--primary);
+}
+.logo span { color: var(--text-dim); font-size: 12px; font-weight: 400; letter-spacing: 1px; margin-left: 6px; }
+.status-pill {
+  padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;
+}
+.status-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
+.status-ok { color: var(--primary); background: var(--primary-dim); }
+.status-warn { color: var(--warn); background: var(--warn-dim); }
+.status-crit { color: var(--crit); background: var(--crit-dim); }
+.clock { font-family: var(--font-mono); font-size: 14px; color: var(--text-dim); }
+.controls { display: flex; gap: 8px; align-items: center; }
+.role-select, .enc-select {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+}
+.main {
+  flex: 1; display: grid; grid-template-columns: 260px 1fr 320px; gap: 12px;
+  padding: 12px; min-height: 0;
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.panel-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 10px; }
+.tree-item {
+  padding: 8px 10px; margin-bottom: 6px; background: rgba(255,255,255,0.03);
+  border-radius: 6px; border-left: 3px solid var(--border); cursor: pointer;
+  transition: all 0.2s; font-size: 13px;
+}
+.tree-item:hover { background: rgba(255,255,255,0.06); }
+.tree-item.active { border-left-color: var(--primary); background: var(--primary-dim); }
+.tree-item .role { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+.tree-item .status { float: right; font-size: 10px; font-weight: 600; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.dot-green { background: var(--primary); box-shadow: 0 0 6px var(--primary); }
+.dot-amber { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.dot-red { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+.dot-gray { background: var(--text-dim); }
+.grid-container {
+  flex: 1; background: radial-gradient(circle at center, #0f1520 0%, var(--bg) 100%);
+  position: relative; display: grid; grid-template-rows: 1fr auto;
+}
+.tactical-grid {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background-image: 
+    linear-gradient(rgba(42, 58, 82, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 58, 82, 0.3) 1px, transparent 1px);
+  background-size: 40px 40px;
+  cursor: crosshair;
+}
+.grid-overlay {
+  position: absolute; top: 10px; left: 10px; font-family: var(--font-mono);
+  font-size: 11px; color: var(--text-dim); background: rgba(0,0,0,0.6); padding: 6px 10px; border-radius: 4px;
+}
+.mission-queue {
+  border-top: 1px solid var(--border); background: var(--panel); padding: 10px; max-height: 180px; overflow-y: auto;
+}
+.mission-card {
+  background: rgba(255,255,255,0.04); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;
+  border-left: 3px solid var(--border); font-size: 12px; display: flex; justify-content: space-between; align-items: center;
+}
+.mission-card.priority-emergency { border-left-color: var(--crit); }
+.mission-card.priority-urgent { border-left-color: var(--warn); }
+.mission-card.priority-routine { border-left-color: var(--info); }
+.mission-meta { font-size: 10px; color: var(--text-dim); }
+.mission-actions { display: flex; gap: 6px; }
+.btn-xs {
+  padding: 4px 8px; border: none; border-radius: 4px; font-size: 10px; font-weight: 600;
+  cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s;
+}
+.btn-approve { background: var(--primary); color: #000; }
+.btn-approve:hover { background: #00cc7a; }
+.btn-reject { background: var(--crit); color: white; }
+.btn-reject:hover { background: #cc2f2f; }
+.btn-view { background: var(--border); color: var(--text); }
+.terminal {
+  font-family: var(--font-mono); font-size: 12px; flex: 1; display: flex; flex-direction: column;
+}
+.terminal-output {
+  flex: 1; overflow-y: auto; padding: 10px; line-height: 1.5;
+  background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 8px;
+}
+.log-entry { margin-bottom: 4px; word-break: break-all; }
+.log-time { color: var(--text-dim); }
+.log-sys { color: var(--info); }
+.log-enc { color: var(--primary); }
+.log-warn { color: var(--warn); }
+.log-crit { color: var(--crit); }
+.terminal-input {
+  display: flex; gap: 6px; padding: 8px; background: rgba(0,0,0,0.4); border-radius: 6px;
+}
+.terminal-input input {
+  flex: 1; background: transparent; border: none; color: var(--primary); font-family: var(--font-mono);
+  font-size: 12px; outline: none; padding: 4px;
+}
+.terminal-input button {
+  background: var(--primary); color: #000; border: none; padding: 4px 12px; border-radius: 4px;
+  font-weight: 700; cursor: pointer; font-size: 11px;
+}
+.battery-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
+.bat-card {
+  background: rgba(255,255,255,0.04); border-radius: 6px; padding: 10px; text-align: center;
+  border: 1px solid var(--border); transition: 0.2s;
+}
+.bat-card.ready { border-color: var(--primary); }
+.bat-card.firing { border-color: var(--warn); animation: pulse-warn 1.5s infinite; }
+.bat-card.reload { border-color: var(--info); }
+.bat-card.maint { border-color: var(--text-dim); }
+.bat-name { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.bat-guns { font-size: 18px; font-weight: 700; margin: 4px 0; }
+.bat-ammunition { font-size: 10px; color: var(--text-dim); }
+@keyframes pulse-warn {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 170, 0, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 170, 0, 0); }
+}
+.alert-banner {
+  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+  background: var(--crit-dim); border: 1px solid var(--crit); color: var(--crit);
+  padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  display: none; z-index: 100; animation: slideDown 0.3s ease;
+}
+@keyframes slideDown { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.tooltip {
+  position: absolute; background: rgba(0,0,0,0.85); color: var(--text); padding: 4px 8px;
+  border-radius: 4px; font-size: 11px; pointer-events: none; z-index: 50; display: none;
+  border: 1px solid var(--border);
+}
+.grid-marker {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%);
+  cursor: pointer; transition: 0.2s; z-index: 5;
+}
+.grid-marker::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+  border-radius: 50%; transform: translate(-50%, -50%); border: 1px solid currentColor; opacity: 0.4;
+}
+.marker-cp { background: var(--primary); color: var(--primary); }
+.marker-fo { background: var(--info); color: var(--info); }
+.marker-bat { background: var(--warn); color: var(--warn); }
+.marker-target { background: var(--crit); color: var(--crit); animation: blink 1s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@media (max-width: 1100px) { .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; } }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="alert-banner" id="alertBanner">⚠️ INTERFERENCIA DETECTADA - CONEXIONES DEGRADADAS</div>
+<div class="tooltip" id="tooltip"></div>
+
+<header class="header">
+  <div class="header-left">
+    <div class="logo">SANTA BÁRBARA <span>SISTEMA DE COMUNICACIONES TÁCTICAS</span></div>
+    <div class="status-pill status-ok" id="sysStatus">RED ACTIVA</div>
+  </div>
+  <div class="controls">
+    <select class="role-select" id="roleSelect">
+      <option value="cp">Puesto de Mando (CP)</option>
+      <option value="fo">Observador Avanzado (FO)</option>
+      <option value="bat">Jefe de Batería</option>
+      <option value="log">Logística</option>
+    </select>
+    <select class="enc-select" id="encSelect">
+      <option value="AES-256">Cifrado AES-256</option>
+      <option value="CHACHA20">CHACHA20-POLY1305</option>
+      <option value="PLAIN">Sin Cifrado (Pruebas)</option>
+    </select>
+    <div class="clock" id="clock">00:00:00 Z</div>
+  </div>
+</header>
+
+<main class="main">
+  <section class="panel">
+    <div class="panel-header">📡 Jerarquía de Comunicaciones <span id="onlineCount">5/6</span></div>
+    <div class="panel-body" id="hierarchyTree"></div>
+    <div class="panel-header" style="border-top: 1px solid var(--border);">🔋 Estado de Baterías</div>
+    <div class="panel-body">
+      <div class="battery-status" id="batteryStatus"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">🗺️ Cuadrícula Táctica MGRS <span style="font-weight:400; font-size:11px;">Clic para designar objetivo</span></div>
+    <div class="grid-container">
+      <div class="tactical-grid" id="tacticalGrid"></div>
+      <div class="grid-overlay">SECTOR NK | ESCALA 1:5000 | ZONA DE FUEGO ALPHA</div>
+    </div>
+    <div class="mission-queue">
+      <div class="panel-header" style="padding:0 0 8px 0; border:none;">📜 Cola de Misiones de Fuego</div>
+      <div id="missionQueue"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">📟 Terminal de Comunicaciones Seguras</div>
+    <div class="panel-body terminal">
+      <div class="terminal-output" id="terminalOutput"></div>
+      <div class="terminal-input">
+        <input type="text" id="commInput" placeholder="Escribir mensaje encriptado...">
+        <button onclick="sendMessage()">ENV</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const STATE = {
+  role: 'cp',
+  enc: 'AES-256',
+  jamming: false,
+  units: {
+    cp: { name: 'Puesto de Mando Alpha', role: 'Comando', status: 'ONLINE', grid: 'NK 456 789', color: 'marker-cp' },
+    fo1: { name: 'Observador Avanzado 1', role: 'Observador', status: 'ONLINE', grid: 'NK 462 795', color: 'marker-fo' },
+    fo2: { name: 'Observador Avanzado 2', role: 'Observador', status: 'DEGRADED', grid: 'NK 450 780', color: 'marker-fo' },
+    bat1: { name: 'Batería 1 - 155mm', role: 'Fuego', status: 'READY', guns: 6, ammo: 85, grid: 'NK 440 770', color: 'marker-bat' },
+    bat2: { name: 'Batería 2 - 120mm', role: 'Fuego', status: 'FIRING', guns: 4, ammo: 62, grid: 'NK 442 768', color: 'marker-bat' },
+    log: { name: 'Logística & Munición', role: 'Soporte', status: 'ONLINE', grid: 'NK 430 750', color: 'marker-cp' }
+  },
+  missions: [],
+  messages: [],
+  targets: []
+};
+
+const GRID_OFFSET_X = 40;
+const GRID_OFFSET_Y = 40;
+const GRID_SCALE = 0.08;
+
+function init() {
+  renderHierarchy();
+  renderBatteryStatus();
+  renderGridMarkers();
+  startClock();
+  startSimulation();
+  setupGridInteraction();
+  addLog('sys', 'SISTEMA SANTA BÁRBARA INICIALIZADO');
+  addLog('sys', 'Canales seguros verificados. Protocolo EDXL-CAP activo.');
+  addLog('enc', `Cifrado activo: ${STATE.enc}`);
+  addLog('sys', 'Esperando designación de objetivos...');
+}
+
+function startClock() {
+  const el = document.getElementById('clock');
+  setInterval(() => {
+    const now = new Date();
+    el.textContent = now.toISOString().split('T')[1].split('.')[0] + ' Z';
+  }, 1000);
+}
+
+function renderHierarchy() {
+  const tree = document.getElementById('hierarchyTree');
+  tree.innerHTML = '';
+  const order = ['cp', 'fo1', 'fo2', 'bat1', 'bat2', 'log'];
+  let online = 0;
+  order.forEach(id => {
+    const u = STATE.units[id];
+    if(u.status === 'ONLINE') online++;
+    const dotClass = u.status === 'ONLINE' ? 'dot-green' : u.status === 'DEGRADED' ? 'dot-amber' : 'dot-red';
+    const div = document.createElement('div');
+    div.className = `tree-item ${STATE.role === id.slice(0,2) ? 'active' : ''}`;
+    div.innerHTML = `<span class="role">${u.role}</span> ${u.name} <span class="status"><span class="status-dot ${dotClass}"></span>${u.status}</span>`;
+    div.onclick = () => {
+      document.querySelectorAll('.tree-item').forEach(i => i.classList.remove('active'));
+      div.classList.add('active');
+    };
+    tree.appendChild(div);
+  });
+  document.getElementById('onlineCount').textContent = `${online}/6`;
+}
+
+function renderBatteryStatus() {
+  const cont = document.getElementById('batteryStatus');
+  cont.innerHTML = '';
+  ['bat1', 'bat2'].forEach(id => {
+    const b = STATE.units[id];
+    const cls = b.status === 'READY' ? 'ready' : b.status === 'FIRING' ? 'firing' : b.status === 'RELOAD' ? 'reload' : 'maint';
+    const div = document.createElement('div');
+    div.className = `bat-card ${cls}`;
+    div.innerHTML = `<div class="bat-name">${b.name}</div><div class="bat-guns">${b.guns} U</div><div class="bat-ammunition">Munición: ${b.ammo}%</div>`;
+    cont.appendChild(div);
+  });
+}
+
+function renderGridMarkers() {
+  const grid = document.getElementById('tacticalGrid');
+  grid.innerHTML = '';
+  Object.values(STATE.units).forEach(u => {
+    if(!u.grid) return;
+    const coords = u.grid.match(/\d+/g);
+    if(!coords || coords.length < 2) return;
+    const x = parseInt(coords[0]) * GRID_SCALE + GRID_OFFSET_X;
+    const y = parseInt(coords[1]) * GRID_SCALE + GRID_OFFSET_Y;
+    const marker = document.createElement('div');
+    marker.className = `grid-marker ${u.color}`;
+    marker.style.left = x + '%';
+    marker.style.top = y + '%';
+    marker.title = `${u.name}\nEstado: ${u.status}\nGrid: ${u.grid}`;
+    grid.appendChild(marker);
+  });
+}
+
+function setupGridInteraction() {
+  const grid = document.getElementById('tacticalGrid');
+  grid.addEventListener('click', (e) => {
+    if(STATE.role !== 'fo') {
+      addLog('warn', 'ACCESO DENEGADO: Solo observadores pueden designar objetivos.');
+      return;
+    }
+    const rect = grid.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    const mgrsX = Math.floor((x - GRID_OFFSET_X) / GRID_SCALE);
+    const mgrsY = Math.floor((y - GRID_OFFSET_Y) / GRID_SCALE);
+    if(mgrsX < 100 || mgrsY < 100) return;
+    const gridRef = `NK ${mgrsX} ${mgrsY}`;
+    createTarget(gridRef, x, y);
+    requestFireMission(gridRef);
+  });
+}
+
+function createTarget(gridRef, x, y) {
+  const grid = document.getElementById('tacticalGrid');
+  const marker = document.createElement('div');
+  marker.className = 'grid-marker marker-target';
+  marker.style.left = x + '%';
+  marker.style.top = y + '%';
+  grid.appendChild(marker);
+  STATE.targets.push({ grid: gridRef, x, y });
+  addLog('sys', `OBJETIVO DESIGNADO: ${gridRef}`);
+}
+
+function requestFireMission(targetGrid) {
+  if(STATE.role !== 'fo') return;
+  const id = 'FM-' + Math.floor(Math.random() * 9000 + 1000);
+  const mission = {
+    id, target: targetGrid, type: 'HE', rounds: 3, status: 'PENDING',
+    priority: 'URGENT', requestedBy: STATE.units.fo1.name, timestamp: new Date()
+  };
+  STATE.missions.push(mission);
+  renderMissionQueue();
+  addLog('enc', `[FO] SOLICITUD DE FUEGO ${id} → ${targetGrid} | 3 RDS HE`);
+  routeMessage('fo1', 'cp', `SOLICITUD FUEGO ${id} | GRID ${targetGrid} | PRIORIDAD URGENTE`);
+}
+
+function renderMissionQueue() {
+  const q = document.getElementById('missionQueue');
+  q.innerHTML = '';
+  STATE.missions.slice(-5).reverse().forEach(m => {
+    const div = document.createElement('div');
+    div.className = `mission-card priority-${m.priority.toLowerCase()}`;
+    let actions = '';
+    if(STATE.role === 'cp' && m.status === 'PENDING') {
+      actions = `<button class="btn-xs btn-approve" onclick="approveMission('${m.id}')">APROBAR</button>
+                 <button class="btn-xs btn-reject" onclick="rejectMission('${m.id}')">RECHAZAR</button>`;
+    } else if(m.status === 'APPROVED') {
+      actions = `<span style="color:var(--warn); font-size:10px;">EN EJECUCIÓN</span>`;
+    } else if(m.status === 'COMPLETE') {
+      actions = `<span style="color:var(--primary); font-size:10px;">COMPLETADO</span>`;
+    }
+    div.innerHTML = `
+      <div>
+        <div style="font-weight:600;">${m.id} | ${m.target}</div>
+        <div class="mission-meta">${m.type.toUpperCase()} | ${m.rounds} RDS | ${m.requestedBy}</div>
+      </div>
+      <div class="mission-actions">${actions}</div>
+    `;
+    q.appendChild(div);
+  });
+}
+
+function approveMission(id) {
+  const m = STATE.missions.find(x => x.id === id);
+  if(!m) return;
+  m.status = 'APPROVED';
+  renderMissionQueue();
+  addLog('sys', `MISIÓN ${id} APROBADA POR CP`);
+  routeMessage('cp', 'bat1', `ORDEN DE FUEGO ${id} | GRID ${m.target} | ${m.rounds} RDS ${m.type} | PRIORIDAD URGENTE`);
+  setTimeout(() => executeFire(m), 2000);
+}
+
+function rejectMission(id) {
+  const m = STATE.missions.find(x => x.id === id);
+  if(!m) return;
+  m.status = 'REJECTED';
+  renderMissionQueue();
+  addLog('crit', `MISIÓN ${id} RECHAZADA`);
+  routeMessage('cp', 'fo1', `MISIÓN ${id} RECHAZADA - REEVALUAR OBJETIVO`);
+}
+
+function executeFire(m) {
+  const bat = STATE.units.bat1;
+  bat.status = 'FIRING';
+  renderBatteryStatus();
+  addLog('sys', `BATERÍA 1 EN FUEGO -> ${m.target}`);
+  setTimeout(() => {
+    bat.status = 'RELOAD';
+    bat.ammo = Math.max(10, bat.ammo - Math.floor(m.rounds * 2));
+    renderBatteryStatus();
+    addLog('sys', `IMPACTO CONFIRMADO EN ${m.target}`);
+    m.status = 'COMPLETE';
+    renderMissionQueue();
+    routeMessage('bat1', 'cp', `EFECTO SOBRE OBJETIVO ${m.target} | MUNICIÓN RESTANTE ${bat.ammo}%`);
+    setTimeout(() => { bat.status = 'READY'; renderBatteryStatus(); }, 3000);
+  }, 2500);
+}
+
+function routeMessage(from, to, content) {
+  if(STATE.jamming && Math.random() > 0.6) {
+    addLog('crit', 'PERDIDA DE PAQUETE: Interferencia detectada en enlace');
+    return;
+  }
+  const encContent = STATE.enc === 'PLAIN' ? content : `[${STATE.enc}] ${btoa(unescape(encodeURIComponent(content))).slice(0, 20)}...`;
+  addLog('enc', `${STATE.units[from]?.name} → ${STATE.units[to]?.name}: ${encContent}`);
+}
+
+function sendMessage() {
+  const input = document.getElementById('commInput');
+  const txt = input.value.trim();
+  if(!txt) return;
+  const to = STATE.role === 'cp' ? 'ALL' : 'cp';
+  routeMessage(STATE.role, to, txt);
+  input.value = '';
+}
+
+document.getElementById('commInput').addEventListener('keypress', (e) => {
+  if(e.key === 'Enter') sendMessage();
+});
+
+function addLog(type, msg) {
+  const out = document.getElementById('terminalOutput');
+  const time = new Date().toISOString().split('T')[1].split('.')[0];
+  const colorClass = type === 'sys' ? 'log-sys' : type === 'enc' ? 'log-enc' : type === 'warn' ? 'log-warn' : 'log-crit';
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.innerHTML = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${msg}</span>`;
+  out.appendChild(div);
+  out.scrollTop = out.scrollHeight;
+}
+
+function startSimulation() {
+  setInterval(() => {
+    if(Math.random() > 0.95) {
+      STATE.jamming = !STATE.jamming;
+      const banner = document.getElementById('alertBanner');
+      const sysStatus = document.getElementById('sysStatus');
+      if(STATE.jamming) {
+        banner.style.display = 'block';
+        sysStatus.className = 'status-pill status-warn';
+        sysStatus.textContent = 'INTERFERENCIA ACTIVA';
+        addLog('crit', '¡ALERTA! JAMMING DETECTADO EN BANDA UHF/VHF');
+      } else {
+        banner.style.display = 'none';
+        sysStatus.className = 'status-pill status-ok';
+        sysStatus.textContent = 'RED ACTIVA';
+        addLog('sys', 'Interferencia neutralizada. Enlaces restaurados.');
+      }
+    }
+  }, 8000);
+
+  setInterval(() => {
+    if(Math.random() > 0.8) {
+      const bat = STATE.units.bat1;
+      bat.ammo = Math.min(100, bat.ammo + Math.floor(Math.randLe falta mucho para llegar al nivel que me dijiste le darías. Corrije ```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SANTA BÁRBARA | Sistema de Comunicaciones de Artillería de Campaña</title>
+<style>
+:root {
+  --bg: #080a0f;
+  --panel: #0d1117;
+  --border: #1c2431;
+  --border-accent: #2a3a52;
+  --primary: #00ff9d;
+  --primary-dim: rgba(0, 255, 157, 0.15);
+  --warn: #ffaa00;
+  --warn-dim: rgba(255, 170, 0, 0.15);
+  --crit: #ff3b3b;
+  --crit-dim: rgba(255, 59, 59, 0.15);
+  --info: #00b4ff;
+  --info-dim: rgba(0, 180, 255, 0.15);
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --font-mono: 'Courier New', Consolas, monospace;
+  --font-ui: system-ui, -apple-system, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.scanlines {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.08) 3px);
+  pointer-events: none; z-index: 9999;
+}
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5); z-index: 10;
+}
+.header-left { display: flex; align-items: center; gap: 12px; }
+.logo {
+  font-family: var(--font-mono); font-weight: 900; font-size: 20px; letter-spacing: 2px;
+  color: var(--primary); text-shadow: 0 0 8px var(--primary);
+}
+.logo span { color: var(--text-dim); font-size: 12px; font-weight: 400; letter-spacing: 1px; margin-left: 6px; }
+.status-pill {
+  padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;
+}
+.status-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 6px currentColor; }
+.status-ok { color: var(--primary); background: var(--primary-dim); }
+.status-warn { color: var(--warn); background: var(--warn-dim); }
+.status-crit { color: var(--crit); background: var(--crit-dim); }
+.clock { font-family: var(--font-mono); font-size: 14px; color: var(--text-dim); }
+.controls { display: flex; gap: 8px; align-items: center; }
+.role-select, .enc-select {
+  background: var(--panel); color: var(--text); border: 1px solid var(--border);
+  padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+}
+.main {
+  flex: 1; display: grid; grid-template-columns: 260px 1fr 320px; gap: 12px;
+  padding: 12px; min-height: 0;
+}
+.panel {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.panel-header {
+  padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.panel-body { flex: 1; overflow-y: auto; padding: 10px; }
+.tree-item {
+  padding: 8px 10px; margin-bottom: 6px; background: rgba(255,255,255,0.03);
+  border-radius: 6px; border-left: 3px solid var(--border); cursor: pointer;
+  transition: all 0.2s; font-size: 13px;
+}
+.tree-item:hover { background: rgba(255,255,255,0.06); }
+.tree-item.active { border-left-color: var(--primary); background: var(--primary-dim); }
+.tree-item .role { font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+.tree-item .status { float: right; font-size: 10px; font-weight: 600; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+.dot-green { background: var(--primary); box-shadow: 0 0 6px var(--primary); }
+.dot-amber { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.dot-red { background: var(--crit); box-shadow: 0 0 6px var(--crit); }
+.dot-gray { background: var(--text-dim); }
+.grid-container {
+  flex: 1; background: radial-gradient(circle at center, #0f1520 0%, var(--bg) 100%);
+  position: relative; display: grid; grid-template-rows: 1fr auto;
+}
+.tactical-grid {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background-image: 
+    linear-gradient(rgba(42, 58, 82, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(42, 58, 82, 0.3) 1px, transparent 1px);
+  background-size: 40px 40px;
+  cursor: crosshair;
+}
+.grid-overlay {
+  position: absolute; top: 10px; left: 10px; font-family: var(--font-mono);
+  font-size: 11px; color: var(--text-dim); background: rgba(0,0,0,0.6); padding: 6px 10px; border-radius: 4px;
+}
+.mission-queue {
+  border-top: 1px solid var(--border); background: var(--panel); padding: 10px; max-height: 180px; overflow-y: auto;
+}
+.mission-card {
+  background: rgba(255,255,255,0.04); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px;
+  border-left: 3px solid var(--border); font-size: 12px; display: flex; justify-content: space-between; align-items: center;
+}
+.mission-card.priority-emergency { border-left-color: var(--crit); }
+.mission-card.priority-urgent { border-left-color: var(--warn); }
+.mission-card.priority-routine { border-left-color: var(--info); }
+.mission-meta { font-size: 10px; color: var(--text-dim); }
+.mission-actions { display: flex; gap: 6px; }
+.btn-xs {
+  padding: 4px 8px; border: none; border-radius: 4px; font-size: 10px; font-weight: 600;
+  cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px; transition: 0.2s;
+}
+.btn-approve { background: var(--primary); color: #000; }
+.btn-approve:hover { background: #00cc7a; }
+.btn-reject { background: var(--crit); color: white; }
+.btn-reject:hover { background: #cc2f2f; }
+.btn-view { background: var(--border); color: var(--text); }
+.terminal {
+  font-family: var(--font-mono); font-size: 12px; flex: 1; display: flex; flex-direction: column;
+}
+.terminal-output {
+  flex: 1; overflow-y: auto; padding: 10px; line-height: 1.5;
+  background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 8px;
+}
+.log-entry { margin-bottom: 4px; word-break: break-all; }
+.log-time { color: var(--text-dim); }
+.log-sys { color: var(--info); }
+.log-enc { color: var(--primary); }
+.log-warn { color: var(--warn); }
+.log-crit { color: var(--crit); }
+.terminal-input {
+  display: flex; gap: 6px; padding: 8px; background: rgba(0,0,0,0.4); border-radius: 6px;
+}
+.terminal-input input {
+  flex: 1; background: transparent; border: none; color: var(--primary); font-family: var(--font-mono);
+  font-size: 12px; outline: none; padding: 4px;
+}
+.terminal-input button {
+  background: var(--primary); color: #000; border: none; padding: 4px 12px; border-radius: 4px;
+  font-weight: 700; cursor: pointer; font-size: 11px;
+}
+.battery-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: 10px; }
+.bat-card {
+  background: rgba(255,255,255,0.04); border-radius: 6px; padding: 10px; text-align: center;
+  border: 1px solid var(--border); transition: 0.2s;
+}
+.bat-card.ready { border-color: var(--primary); }
+.bat-card.firing { border-color: var(--warn); animation: pulse-warn 1.5s infinite; }
+.bat-card.reload { border-color: var(--info); }
+.bat-card.maint { border-color: var(--text-dim); }
+.bat-name { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.bat-guns { font-size: 18px; font-weight: 700; margin: 4px 0; }
+.bat-ammunition { font-size: 10px; color: var(--text-dim); }
+@keyframes pulse-warn {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 170, 0, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(255, 170, 0, 0); }
+}
+.alert-banner {
+  position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+  background: var(--crit-dim); border: 1px solid var(--crit); color: var(--crit);
+  padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  display: none; z-index: 100; animation: slideDown 0.3s ease;
+}
+@keyframes slideDown { from { opacity: 0; transform: translate(-50%, -20px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.tooltip {
+  position: absolute; background: rgba(0,0,0,0.85); color: var(--text); padding: 4px 8px;
+  border-radius: 4px; font-size: 11px; pointer-events: none; z-index: 50; display: none;
+  border: 1px solid var(--border);
+}
+.grid-marker {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%);
+  cursor: pointer; transition: 0.2s; z-index: 5;
+}
+.grid-marker::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 20px; height: 20px;
+  border-radius: 50%; transform: translate(-50%, -50%); border: 1px solid currentColor; opacity: 0.4;
+}
+.marker-cp { background: var(--primary); color: var(--primary); }
+.marker-fo { background: var(--info); color: var(--info); }
+.marker-bat { background: var(--warn); color: var(--warn); }
+.marker-target { background: var(--crit); color: var(--crit); animation: blink 1s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@media (max-width: 1100px) { .main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; } }
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="alert-banner" id="alertBanner">⚠️ INTERFERENCIA DETECTADA - CONEXIONES DEGRADADAS</div>
+<div class="tooltip" id="tooltip"></div>
+
+<header class="header">
+  <div class="header-left">
+    <div class="logo">SANTA BÁRBARA <span>SISTEMA DE COMUNICACIONES TÁCTICAS</span></div>
+    <div class="status-pill status-ok" id="sysStatus">RED ACTIVA</div>
+  </div>
+  <div class="controls">
+    <select class="role-select" id="roleSelect">
+      <option value="cp">Puesto de Mando (CP)</option>
+      <option value="fo">Observador Avanzado (FO)</option>
+      <option value="bat">Jefe de Batería</option>
+      <option value="log">Logística</option>
+    </select>
+    <select class="enc-select" id="encSelect">
+      <option value="AES-256">Cifrado AES-256</option>
+      <option value="CHACHA20">CHACHA20-POLY1305</option>
+      <option value="PLAIN">Sin Cifrado (Pruebas)</option>
+    </select>
+    <div class="clock" id="clock">00:00:00 Z</div>
+  </div>
+</header>
+
+<main class="main">
+  <section class="panel">
+    <div class="panel-header">📡 Jerarquía de Comunicaciones <span id="onlineCount">5/6</span></div>
+    <div class="panel-body" id="hierarchyTree"></div>
+    <div class="panel-header" style="border-top: 1px solid var(--border);">🔋 Estado de Baterías</div>
+    <div class="panel-body">
+      <div class="battery-status" id="batteryStatus"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">🗺️ Cuadrícula Táctica MGRS <span style="font-weight:400; font-size:11px;">Clic para designar objetivo</span></div>
+    <div class="grid-container">
+      <div class="tactical-grid" id="tacticalGrid"></div>
+      <div class="grid-overlay">SECTOR NK | ESCALA 1:5000 | ZONA DE FUEGO ALPHA</div>
+    </div>
+    <div class="mission-queue">
+      <div class="panel-header" style="padding:0 0 8px 0; border:none;">📜 Cola de Misiones de Fuego</div>
+      <div id="missionQueue"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-header">📟 Terminal de Comunicaciones Seguras</div>
+    <div class="panel-body terminal">
+      <div class="terminal-output" id="terminalOutput"></div>
+      <div class="terminal-input">
+        <input type="text" id="commInput" placeholder="Escribir mensaje encriptado...">
+        <button onclick="sendMessage()">ENV</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const STATE = {
+  role: 'cp',
+  enc: 'AES-256',
+  jamming: false,
+  units: {
+    cp: { name: 'Puesto de Mando Alpha', role: 'Comando', status: 'ONLINE', grid: 'NK 456 789', color: 'marker-cp' },
+    fo1: { name: 'Observador Avanzado 1', role: 'Observador', status: 'ONLINE', grid: 'NK 462 795', color: 'marker-fo' },
+    fo2: { name: 'Observador Avanzado 2', role: 'Observador', status: 'DEGRADED', grid: 'NK 450 780', color: 'marker-fo' },
+    bat1: { name: 'Batería 1 - 155mm', role: 'Fuego', status: 'READY', guns: 6, ammo: 85, grid: 'NK 440 770', color: 'marker-bat' },
+    bat2: { name: 'Batería 2 - 120mm', role: 'Fuego', status: 'FIRING', guns: 4, ammo: 62, grid: 'NK 442 768', color: 'marker-bat' },
+    log: { name: 'Logística & Munición', role: 'Soporte', status: 'ONLINE', grid: 'NK 430 750', color: 'marker-cp' }
+  },
+  missions: [],
+  messages: [],
+  targets: []
+};
+
+const GRID_OFFSET_X = 40;
+const GRID_OFFSET_Y = 40;
+const GRID_SCALE = 0.08;
+
+function init() {
+  renderHierarchy();
+  renderBatteryStatus();
+  renderGridMarkers();
+  startClock();
+  startSimulation();
+  setupGridInteraction();
+  addLog('sys', 'SISTEMA SANTA BÁRBARA INICIALIZADO');
+  addLog('sys', 'Canales seguros verificados. Protocolo EDXL-CAP activo.');
+  addLog('enc', `Cifrado activo: ${STATE.enc}`);
+  addLog('sys', 'Esperando designación de objetivos...');
+}
+
+function startClock() {
+  const el = document.getElementById('clock');
+  setInterval(() => {
+    const now = new Date();
+    el.textContent = now.toISOString().split('T')[1].split('.')[0] + ' Z';
+  }, 1000);
+}
+
+function renderHierarchy() {
+  const tree = document.getElementById('hierarchyTree');
+  tree.innerHTML = '';
+  const order = ['cp', 'fo1', 'fo2', 'bat1', 'bat2', 'log'];
+  let online = 0;
+  order.forEach(id => {
+    const u = STATE.units[id];
+    if(u.status === 'ONLINE') online++;
+    const dotClass = u.status === 'ONLINE' ? 'dot-green' : u.status === 'DEGRADED' ? 'dot-amber' : 'dot-red';
+    const div = document.createElement('div');
+    div.className = `tree-item ${STATE.role === id.slice(0,2) ? 'active' : ''}`;
+    div.innerHTML = `<span class="role">${u.role}</span> ${u.name} <span class="status"><span class="status-dot ${dotClass}"></span>${u.status}</span>`;
+    div.onclick = () => {
+      document.querySelectorAll('.tree-item').forEach(i => i.classList.remove('active'));
+      div.classList.add('active');
+    };
+    tree.appendChild(div);
+  });
+  document.getElementById('onlineCount').textContent = `${online}/6`;
+}
+
+function renderBatteryStatus() {
+  const cont = document.getElementById('batteryStatus');
+  cont.innerHTML = '';
+  ['bat1', 'bat2'].forEach(id => {
+    const b = STATE.units[id];
+    const cls = b.status === 'READY' ? 'ready' : b.status === 'FIRING' ? 'firing' : b.statuhttps://cocoapods.org lee esto y plantéame como lo usaremos ```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SANTA BÁRBARA | Sistema de Comunicaciones Tácticas de Artillería</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&display=swap');
+:root{
+  --bg:#060a0f;--panel:#0b1019;--panel2:#0f1522;--border:#1a2435;--border2:#253348;
+  --primary:#00e5a0;--primary-dim:rgba(0,229,160,.12);--primary-glow:rgba(0,229,160,.4);
+  --warn:#ffb300;--warn-dim:rgba(255,179,0,.12);--crit:#ff2d55;--crit-dim:rgba(255,45,85,.12);
+  --info:#00aaff;--info-dim:rgba(0,170,255,.12);--purple:#8b5cf6;--purple-dim:rgba(139,92,246,.12);
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
+  --mono:'Share Tech Mono',monospace;--ui:'Rajdhani',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--ui);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::selection{background:var(--primary);color:#000}
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+
+/* HEADER */
+.header{display:flex;align-items:center;justify-content:space-between;padding:8px 16px;background:var(--panel);border-bottom:1px solid var(--border);z-index:100;flex-shrink:0}
+.header::after{content:'';position:absolute;bottom:-1px;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--primary),var(--info),var(--primary),transparent);opacity:.5}
+.logo-area{display:flex;align-items:center;gap:14px}
+.logo-icon{width:38px;height:38px;background:linear-gradient(135deg,var(--primary),var(--info));border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;position:relative}
+.logo-icon::after{content:'';position:absolute;inset:-2px;border-radius:10px;border:1px solid var(--primary);opacity:.3;animation:pulse-border 3s infinite}
+@keyframes pulse-border{0%,100%{opacity:.3}50%{opacity:.8}}
+.logo-text h1{font-family:var(--mono);font-size:18px;letter-spacing:4px;color:var(--primary);text-shadow:0 0 15px var(--primary-glow)}
+.logo-text p{font-size:11px;color:var(--text3);letter-spacing:1px}
+.header-center{display:flex;gap:8px;align-items:center}
+.badge{padding:4px 12px;border-radius:20px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:6px;border:1px solid}
+.badge-dot{width:6px;height:6px;border-radius:50%;background:currentColor;animation:blink 1.5s infinite}
+.badge-online{color:var(--primary);border-color:rgba(0,229,160,.3);background:var(--primary-dim)}
+.badge-offline{color:var(--crit);border-color:rgba(255,45,85,.3);background:var(--crit-dim)}
+.badge-warn{color:var(--warn);border-color:rgba(255,179,0,.3);background:var(--warn-dim)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.header-right{display:flex;align-items:center;gap:10px}
+.select-mil{background:var(--panel2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:var(--ui);font-size:12px;cursor:pointer;outline:none}
+.select-mil:focus{border-color:var(--primary)}
+.select-mil option{background:var(--panel);color:var(--text)}
+.clock-mil{font-family:var(--mono);font-size:14px;color:var(--text2);min-width:80px;text-align:center}
+
+/* MAIN LAYOUT */
+.main{flex:1;display:grid;grid-template-columns:280px 1fr 340px;gap:0;min-height:0}
+
+/* LEFT PANEL */
+.left-panel{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.panel-section{border-bottom:1px solid var(--border)}
+.panel-section:last-child{border-bottom:none}
+.section-header{padding:10px 14px;display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);cursor:pointer;user-select:none;transition:.2s}
+.section-header:hover{color:var(--text2);background:rgba(255,255,255,.02)}
+.section-header .count{background:var(--border);padding:1px 7px;border-radius:8px;font-size:10px}
+.section-body{padding:6px 10px 10px;max-height:200px;overflow-y:auto;transition:max-height .3s}
+.section-body.collapsed{max-height:0;padding:0;overflow:hidden}
+
+.unit-card{padding:8px 10px;margin-bottom:4px;background:rgba(255,255,255,.02);border-radius:6px;border-left:3px solid var(--border);cursor:pointer;transition:.2s;position:relative}
+.unit-card:hover{background:rgba(255,255,255,.05)}
+.unit-card.selected{border-left-color:var(--primary);background:var(--primary-dim)}
+.unit-card .uc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+.unit-card .uc-name{font-size:12px;font-weight:600}
+.unit-card .uc-role{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.unit-card .uc-status{display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600}
+.unit-card .uc-detail{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:3px}
+.uc-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.uc-dot.green{background:var(--primary);box-shadow:0 0 6px var(--primary)}
+.uc-dot.amber{background:var(--warn);box-shadow:0 0 6px var(--warn)}
+.uc-dot.red{background:var(--crit);box-shadow:0 0 6px var(--crit)}
+.uc-dot.gray{background:var(--text3)}
+
+/* CENTER - TACTICAL MAP */
+.center-area{display:flex;flex-direction:column;position:relative;overflow:hidden}
+.map-container{flex:1;position:relative;background:linear-gradient(180deg,#0a0f18 0%,#080c14 100%);cursor:crosshair;overflow:hidden}
+.map-grid{position:absolute;inset:0;background-image:linear-gradient(rgba(26,36,53,.5) 1px,transparent 1px),linear-gradient(90deg,rgba(26,36,53,.5) 1px,transparent 1px);background-size:50px 50px}
+.map-grid::after{content:'';position:absolute;inset:0;background-image:linear-gradient(rgba(26,36,53,.2) 1px,transparent 1px),linear-gradient(90deg,rgba(26,36,53,.2) 1px,transparent 1px);background-size:10px 10px}
+.map-overlay-info{position:absolute;top:12px;left:12px;font-family:var(--mono);font-size:11px;color:var(--text3);background:rgba(0,0,0,.7);padding:8px 12px;border-radius:6px;border:1px solid var(--border);line-height:1.6;z-index:5}
+.map-overlay-info span{color:var(--primary)}
+.map-crosshair{position:absolute;width:30px;height:30px;border:1px solid var(--primary);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;display:none;z-index:4}
+.map-crosshair::before,.map-crosshair::after{content:'';position:absolute;background:var(--primary)}
+.map-crosshair::before{width:1px;height:100%;left:50%;top:0}
+.map-crosshair::after{width:100%;height:1px;top:50%;left:0}
+.map-target{position:absolute;width:16px;height:16px;transform:translate(-50%,-50%);z-index:6;cursor:pointer}
+.map-target::before{content:'';position:absolute;inset:-4px;border:1px solid var(--crit);border-radius:50%;animation:target-pulse 2s infinite}
+.map-target .tgt-inner{width:16px;height:16px;background:var(--crit);border-radius:50%;box-shadow:0 0 12px var(--crit)}
+.map-target .tgt-label{position:absolute;top:-18px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9px;color:var(--crit);white-space:nowrap}
+@keyframes target-pulse{0%{transform:scale(1);opacity:.8}100%{transform:scale(2.5);opacity:0}}
+.map-marker{position:absolute;width:14px;height:14px;transform:translate(-50%,-50%);z-index:3;cursor:pointer;transition:transform .2s}
+.map-marker:hover{transform:translate(-50%,-50%) scale(1.5)}
+.map-marker .mk-inner{width:14px;height:14px;border-radius:50%;border:2px solid;position:relative}
+.map-marker .mk-inner::after{content:'';position:absolute;inset:2px;border-radius:50%;background:currentColor}
+.map-marker .mk-label{position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:9px;white-space:nowrap}
+.mk-cp .mk-inner{color:var(--primary);background:var(--primary);border-color:var(--primary)}
+.mk-fo .mk-inner{color:var(--info);background:var(--info);border-color:var(--info)}
+.mk-bat .mk-inner{color:var(--warn);background:var(--warn);border-color:var(--warn)}
+.mk-log .mk-inner{color:var(--purple);background:var(--purple);border-color:var(--purple)}
+.fire-line{position:absolute;border-top:2px dashed var(--warn);opacity:.4;z-index:2;transform-origin:left center}
+.trajectory-arc{position:absolute;border:2px solid var(--primary);border-radius:50%;border-bottom-color:transparent;border-left-color:transparent;border-right-color:transparent;opacity:.3;z-index:2;pointer-events:none}
+
+/* FIRE MISSIONS BAR */
+.missions-bar{background:var(--panel);border-top:1px solid var(--border);padding:10px 14px;display:flex;flex-direction:column;gap:8px;max-height:160px;overflow:hidden;flex-shrink:0}
+.missions-bar .mb-header{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3)}
+.missions-list{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;flex:1;align-items:flex-start}
+.mission-card{min-width:220px;max-width:260px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid var(--border);padding:10px;flex-shrink:0;position:relative;overflow:hidden;transition:.2s}
+.mission-card:hover{border-color:var(--border2);background:rgba(255,255,255,.05)}
+.mission-card.prio-emergency{border-left:3px solid var(--crit)}
+.mission-card.prio-urgent{border-left:3px solid var(--warn)}
+.mission-card.prio-routine{border-left:3px solid var(--info)}
+.mc-id{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text);margin-bottom:4px}
+.mc-target{font-family:var(--mono);font-size:12px;color:var(--primary);margin-bottom:2px}
+.mc-details{font-size:10px;color:var(--text3);line-height:1.5}
+.mc-actions{display:flex;gap:4px;margin-top:8px}
+.mc-actions button{flex:1;padding:5px;border:none;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.2s}
+.mc-btn-approve{background:var(--primary);color:#000}.mc-btn-approve:hover{background:#00cc88}
+.mc-btn-reject{background:var(--crit);color:#fff}.mc-btn-reject:hover{background:#e02040}
+.mc-btn-view{background:var(--border);color:var(--text)}.mc-btn-view:hover{background:var(--border2)}
+.mc-status{position:absolute;top:8px;right:10px;font-size:9px;font-weight:700;text-transform:uppercase;padding:2px 6px;border-radius:3px}
+.mc-status.pending{background:var(--warn-dim);color:var(--warn)}
+.mc-status.approved{background:var(--primary-dim);color:var(--primary)}
+.mc-status.executing{background:var(--info-dim);color:var(--info);animation:blink 1s infinite}
+.mc-status.complete{background:var(--primary-dim);color:var(--primary)}
+.mc-status.rejected{background:var(--crit-dim);color:var(--crit)}
+
+/* RIGHT PANEL */
+.right-panel{background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+
+/* TERMINAL */
+.terminal{flex:1;display:flex;flex-direction:column;min-height:0}
+.term-header{padding:8px 14px;display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-bottom:1px solid var(--border)}
+.term-header .term-ch{font-family:var(--mono);color:var(--primary);font-size:10px}
+.term-output{flex:1;overflow-y:auto;padding:10px;font-family:var(--mono);font-size:11px;line-height:1.6}
+.term-line{margin-bottom:2px;display:flex;gap:6px}
+.term-line .t-time{color:var(--text3);white-space:nowrap}
+.term-line .t-src{font-weight:700;white-space:nowrap;min-width:40px}
+.term-line .t-msg{word-break:break-word;flex:1}
+.t-sys .t-src{color:var(--info)}.t-sys .t-msg{color:var(--info)}
+.t-enc .t-msg{color:var(--primary)}.t-crit .t-src{color:var(--crit)}.t-crit .t-msg{color:var(--crit)}
+.t-fo .t-src{color:var(--info)}.t-bat .t-src{color:var(--warn)}.t-cp .t-src{color:var(--primary)}.t-log .t-src{color:var(--purple)}
+.term-input-area{padding:8px 10px;border-top:1px solid var(--border);display:flex;gap:6px;align-items:center}
+.term-input-area input{flex:1;background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--primary);font-family:var(--mono);font-size:12px;outline:none}
+.term-input-area input:focus{border-color:var(--primary)}
+.term-input-area button{background:var(--primary);color:#000;border:none;padding:8px 14px;border-radius:6px;font-weight:700;font-size:11px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.2s}
+.term-input-area button:hover{background:#00cc88}
+
+/* COMM CHANNELS */
+.channels-section{border-bottom:1px solid var(--border);padding:8px 14px}
+.ch-header{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:6px}
+.ch-list{display:flex;flex-direction:column;gap:4px}
+.ch-item{padding:6px 8px;border-radius:4px;font-size:11px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;transition:.2s;background:rgba(255,255,255,.02)}
+.ch-item:hover{background:rgba(255,255,255,.05)}
+.ch-item.active{background:var(--primary-dim);border-left:2px solid var(--primary)}
+.ch-item .ch-name{font-weight:600}
+.ch-item .ch-members{color:var(--text3);font-size:10px}
+
+/* TELEMETRY */
+.telemetry-section{padding:8px 14px;border-bottom:1px solid var(--border)}
+.tel-header{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px}
+.tel-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.tel-card{background:rgba(255,255,255,.03);border-radius:6px;padding:8px;border:1px solid var(--border);text-align:center}
+.tel-card .tc-label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+.tel-card .tc-value{font-family:var(--mono);font-size:18px;font-weight:700;margin:2px 0}
+.tel-card .tc-unit{font-size:9px;color:var(--text3)}
+.tc-val-green{color:var(--primary)}.tc-val-amber{color:var(--warn)}.tc-val-red{color:var(--crit)}.tc-val-blue{color:var(--info)}
+
+/* AMMUNITION PANEL */
+.ammo-section{padding:8px 14px;flex:1;overflow-y:auto}
+.ammo-header{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);margin-bottom:8px}
+.ammo-bat{margin-bottom:10px}
+.ammo-bat-name{font-size:11px;font-weight:600;margin-bottom:4px;display:flex;justify-content:space-between}
+.ammo-bar-container{background:rgba(255,255,255,.05);border-radius:4px;height:8px;overflow:hidden;margin-bottom:4px}
+.ammo-bar{height:100%;border-radius:4px;transition:width 1s ease}
+.ammo-bar.green{background:linear-gradient(90deg,var(--primary),#00ff9d)}
+.ammo-bar.amber{background:linear-gradient(90deg,var(--warn),#ffcc00)}
+.ammo-bar.red{background:linear-gradient(90deg,var(--crit),#ff6b6b)}
+.ammo-detail{display:flex;justify-content:space-between;font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* NOTIFICATION */
+.notif{position:fixed;top:60px;right:20px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px 18px;z-index:1000;display:flex;align-items:center;gap:10px;animation:notif-in .3s ease,fade-out .3s ease 3.7s forwards;box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:350px}
+.notif.n-ok{border-left:3px solid var(--primary)}.notif.n-warn{border-left:3px solid var(--warn)}.notif.n-crit{border-left:3px solid var(--crit)}.notif.n-info{border-left:3px solid var(--info)}
+.notif-icon{font-size:18px}.notif-text{font-size:12px;line-height:1.4}.notif-text strong{display:block;margin-bottom:2px}
+@keyframes notif-in{from{opacity:0;transform:translateX(100px)}to{opacity:1;transform:translateX(0)}}
+@keyframes fade-out{to{opacity:0;transform:translateX(100px)}}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:500;display:none;align-items:center;justify-content:center}
+.modal-overlay.active{display:flex}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:12px;width:90%;max-width:600px;max-height:80vh;overflow-y:auto;position:relative}
+.modal::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--primary),var(--info),var(--primary))}
+.modal-h{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.modal-h h3{font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:1px}
+.modal-close{width:32px;height:32px;border-radius:6px;background:var(--border);border:none;color:var(--text);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:.2s}
+.modal-close:hover{background:var(--crit);color:#fff}
+.modal-b{padding:20px}
+.modal-f{padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.fg input,.fg select,.fg textarea{width:100%;padding:8px 12px;background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--ui);font-size:13px;outline:none}
+.fg input:focus,.fg select:focus,.fg textarea:focus{border-color:var(--primary)}
+.fg textarea{min-height:60px;resize:vertical}
+.fg-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn-m{padding:8px 18px;border:none;border-radius:6px;font-weight:700;font-size:12px;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;transition:.2s}
+.btn-m.primary{background:var(--primary);color:#000}.btn-m.primary:hover{background:#00cc88}
+.btn-m.ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}.btn-m.ghost:hover{background:var(--border)}
+.btn-m.danger{background:var(--crit);color:#fff}.btn-m.danger:hover{background:#e02040}
+
+/* ALERT BANNER */
+.alert-banner{position:fixed;top:52px;left:50%;transform:translateX(-50%);background:var(--crit-dim);border:1px solid var(--crit);color:var(--crit);padding:8px 24px;border-radius:8px;font-size:12px;font-weight:600;display:none;z-index:200;animation:slideDown .3s ease}
+@keyframes slideDown{from{opacity:0;transform:translate(-50%,-20px)}to{opacity:1;transform:translate(-50%,0)}}
+
+/* TOOLTIP */
+.tooltip-m{position:fixed;background:rgba(0,0,0,.9);color:var(--text);padding:6px 10px;border-radius:6px;font-size:11px;pointer-events:none;z-index:60;display:none;border:1px solid var(--border);font-family:var(--mono);line-height:1.5}
+
+/* SCANLINE */
+.scanlines{position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.06) 3px);pointer-events:none;z-index:9999}
+
+/* EDXL BLOCK */
+.edxl-block{background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:6px;padding:10px;margin:8px 0;font-family:var(--mono);font-size:10px;color:var(--text3);line-height:1.6;white-space:pre-wrap}
+.edxl-block .edxl-key{color:var(--info)}
+.edxl-block .edxl-val{color:var(--primary)}
+
+/* RESPONSIVE */
+@media(max-width:1200px){.main{grid-template-columns:240px 1fr 300px}}
+@media(max-width:960px){.main{grid-template-columns:1fr;grid-template-rows:auto 1fr auto}.left-panel{display:none}}
+</style>
+</head>
+<body>
+<div class="scanlines"></div>
+<div class="alert-banner" id="alertBanner">⚠️ JAMMING DETECTADO — ENLACES SATURADOS — PROTOCOLO ANTIPERTURBACIÓN ACTIVO</div>
+<div class="tooltip-m" id="tooltip"></div>
+
+<header class="header">
+  <div class="logo-area">
+    <div class="logo-icon">🎖️</div>
+    <div class="logo-text">
+      <h1>SANTA BÁRBARA</h1>
+      <p>SISTEMA INTEROPERABLE DE COMUNICACIONES TÁCTICAS — ARTILLERÍA DE CAMPAÑA</p>
+    </div>
+  </div>
+  <div class="header-center">
+    <div class="badge badge-online" id="sysBadge"><span class="badge-dot"></span>RED OPERATIVA</div>
+    <div class="badge badge-online" id="encBadge"><span class="badge-dot"></span>AES-256-GCM</div>
+    <div class="clock-mil" id="clock">00:00:00Z</div>
+  </div>
+  <div class="header-right">
+    <select class="select-mil" id="roleSelect" onchange="changeRole(this.value)">
+      <option value="cp">Puesto de Mando (CP)</option>
+      <option value="fo">Observador Avanzado (FO)</option>
+      <option value="bat">Jefe de Batería</option>
+      <option value="log">Logística</option>
+    </select>
+    <select class="select-mil" id="encSelect" onchange="changeEnc(this.value)">
+      <option value="AES-256-GCM">AES-256-GCM</option>
+      <option value="CHACHA20-POLY1305">CHACHA20-POLY1305</option>
+      <option value="PLAIN">Texto Plano (Pruebas)</option>
+    </select>
+  </div>
+</header>
+
+<main class="main">
+  <!-- LEFT PANEL -->
+  <aside class="left-panel">
+    <div class="panel-section">
+      <div class="section-header" onclick="toggleSection(this)">📡 Jerarquía Táctica <span class="count" id="unitCount">6</span></div>
+      <div class="section-body" id="unitTree"></div>
+    </div>
+    <div class="panel-section">
+      <div class="section-header" onclick="toggleSection(this)">📢 Canales de Comunicación <span class="count">4</span></div>
+      <div class="section-body">
+        <div class="ch-list" id="channelList"></div>
+      </div>
+    </div>
+    <div class="panel-section">
+      <div class="section-header" onclick="toggleSection(this)">📊 Telemetría en Tiempo Real <span class="badge-dot" style="background:var(--primary);width:6px;height:6px;border-radius:50%;display:inline-block"></span></div>
+      <div class="section-body" id="telemetryPanel"></div>
+    </div>
+    <div class="panel-section">
+      <div class="section-header" onclick="toggleSection(this)">🔋 Inventario de Munición</div>
+      <div class="section-body" id="ammoPanel" style="max-height:220px"></div>
+    </div>
+  </aside>
+
+  <!-- CENTER - TACTICAL MAP -->
+  <section class="center-area">
+    <div class="map-container" id="mapContainer">
+      <div class="map-grid"></div>
+      <div class="map-overlay-info">
+        <div>SECTOR: <span>NK 00</span> | ESCALA: <span>1:5000</span></div>
+        <div>ZONA: <span>ALPHA-FOXTROT</span> | CLASIFICACIÓN: <span>SECRETO</span></div>
+        <div>MGRS: <span id="mgrsCursor">NK --- ---</span></div>
+      </div>
+      <div class="map-crosshair" id="mapCrosshair"></div>
+      <div id="mapMarkers"></div>
+      <div id="mapTargets"></div>
+      <div id="mapLines"></div>
+    </div>
+    <div class="missions-bar">
+      <div class="mb-header">
+        <span>📜 Cola de Misiones de Fuego</span>
+        <span id="missionCount" style="font-size:10px">0 pendientes</span>
+      </div>
+      <div class="missions-list" id="missionsList"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT PANEL -->
+  <aside class="right-panel">
+    <div class="terminal">
+      <div class="term-header">
+        <span>📟 Terminal Segura</span>
+        <span class="term-ch" id="termCh">CANAL: CP-NET</span>
+      </div>
+      <div class="term-output" id="termOutput"></div>
+      <div class="term-input-area">
+        <input type="text" id="termInput" placeholder="Mensaje cifrado..." onkeypress="if(event.key==='Enter')sendTermMsg()">
+        <button onclick="sendTermMsg()">ENVIAR</button>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<!-- MISSION MODAL -->
+<div class="modal-overlay" id="missionModal">
+  <div class="modal">
+    <div class="modal-h">
+      <h3 id="modalTitle">Detalle de Misión</h3>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-b" id="modalBody"></div>
+    <div class="modal-f" id="modalFooter"></div>
+  </div>
+</div>
+
+<script>
+// ==================== STATE ====================
+const S = {
+  role:'cp', enc:'AES-256-GCM', jamming:false, selectedUnit:null, activeChannel:'cp-net',
+  units:{
+    cp:{id:'cp',name:'Puesto de Mando Alpha',role:'Comando',status:'ONLINE',grid:'NK 456 789',lat:38.7223,lon:-9.1393,callSign:'EAGLE-06',clearance:'SECRET',type:'cp'},
+    fo1:{id:'fo1',name:'FO "Víbora" — Sgto. Mendes',role:'Observador',status:'ONLINE',grid:'NK 462 795',lat:38.7240,lon:-9.1340,callSign:'COBRA-11',clearance:'CONFIDENTIAL',type:'fo'},
+    fo2:{id:'fo2',name:'FO "Cuervo" — Cbo. Silva',role:'Observador',status:'DEGRADED',grid:'NK 450 780',lat:38.7180,lon:-9.1450,callSign:'RAVEN-03',clearance:'CONFIDENTIAL',type:'fo'},
+    bat1:{id:'bat1',name:'1ª Batería — 155mm M777',role:'Fuego',status:'READY',grid:'NK 440 770',lat:38.7120,lon:-9.1520,callSign:'THUNDER-01',clearance:'SECRET',type:'bat',guns:6,ammo:85,ammoTypes:{HE:60,SMOKE:15,ILUM:10}},
+    bat2:{id:'bat2',name:'2ª Batería — 120mm L16',role:'Fuego',status:'RELOAD',grid:'NK 442 768',lat:38.7100,lon:-9.1490,callSign:'THUNDER-02',clearance:'SECRET',type:'bat',guns:4,ammo:42,ammoTypes:{HE:30,SMOKE:8,ILUM:4}},
+    log:{id:'log',name:'Unidad Logística "Mula"',role:'Soporte',status:'ONLINE',grid:'NK 430 750',lat:38.7050,lon:-9.1600,callSign:'PACK-01',clearance:'RESTRICTED',type:'log',cargo:{HE:200,SMOKE:50,ILUM:30,DIESEL:5000}}
+  },
+  missions:[],msgLog:[],targets:[],msgId:0,
+  channels:[
+    {id:'cp-net',name:'CP-NET',members:['cp','bat1','bat2'],secure:true},
+    {id:'fo-channel',name:'FO-CHAN',members:['fo1','fo2','cp'],secure:true},
+    {id:'fire-net',name:'FIRE-NET',members:['cp','bat1','bat2','fo1'],secure:true},
+    {id:'log-net',name:'LOG-NET',members:['cp','log','bat1','bat2'],secure:true}
+  ]
+};
+
+// ==================== UTILITY ====================
+function uid(){return 'SBS-'+String(Math.floor(Math.random()*9000+1000))+'-'+Date.now().toString(36).toUpperCase()}
+function timeStr(){const d=new Date();return d.toISOString().substr(11,8)+'Z'}
+function encMsg(txt){if(S.enc==='PLAIN')return txt;return `[${S.enc}] ${btoa(unescape(encodeURIComponent(txt))).slice(0,30)}...[AES-NONCE:${Math.random().toString(16).slice(2,10)}]`}
+function notify(msg,type='n-ok'){const n=document.createElement('div');n.className='notif '+type;n.innerHTML=`<div class="notif-icon">${type==='n-ok'?'✅':type==='n-warn'?'⚠️':type==='n-crit'?'':'ℹ️'}</div><div class="notif-text"><strong>SANTA BÁRBARA</strong>${msg}</div>`;document.body.appendChild(n);setTimeout(()=>n.remove(),4000)}
+function addTerm(type,src,msg){const out=document.getElementById('termOutput');const line=document.createElement('div');line.className='term-line t-'+type;line.innerHTML=`<span class="t-time">[${timeStr()}]</span><span class="t-src">[${src.toUpperCase()}]</span><span class="t-msg">${msg}</span>`;out.appendChild(line);out.scrollTop=out.scrollHeight;S.msgLog.push({time:timeStr(),type,src,msg})}
+
+// ==================== CLOCK ====================
+function startClock(){setInterval(()=>{document.getElementById('clock').textContent=timeStr()},1000)}
+
+// ==================== RENDER UNITS ====================
+function renderUnits(){
+  const tree=document.getElementById('unitTree');tree.innerHTML='';
+  let online=0;
+  Object.values(S.units).forEach(u=>{
+    if(u.status==='ONLINE')online++;
+    const dot=u.status==='ONLINE'?'green':u.status==='DEGRADED'?'amber':'red';
+    const div=document.createElement('div');
+    div.className='unit-card'+(S.selectedUnit===u.id?' selected':'');
+    div.innerHTML=`<div class="uc-top"><span class="uc-name">${u.name}</span><span class="uc-status"><span class="uc-dot ${dot}"></span>${u.status}</span></div><div class="uc-role">${u.role} | ${u.callSign}</div><div class="uc-detail">MGRS: ${u.grid} | Cls: ${u.clearance}</div>`;
+    div.onclick=()=>{S.selectedUnit=u.id;renderUnits()};
+    tree.appendChild(div);
+  });
+  document.getElementById('unitCount').textContent=online+'/'+Object.keys(S.units).length;
+}
+
+// ==================== RENDER CHANNELS ====================
+function renderChannels(){
+  const list=document.getElementById('channelList');list.innerHTML='';
+  S.channels.forEach(ch=>{
+    const div=document.createElement('div');
+    div.className='ch-item'+(S.activeChannel===ch.id?' active':'');
+    div.innerHTML=`<span class="ch-name">${ch.name}</span><span class="ch-members">${ch.members.map(m=>S.units[m]?.callSign||m).join(', ')}</span>`;
+    div.onclick=()=>{S.activeChannel=ch.id;renderChannels();document.getElementById('termCh').textContent='CANAL: '+ch.name.toUpperCase()};
+    list.appendChild(div);
+  });
+}
+
+// ==================== RENDER TELEMETRY ====================
+function renderTelemetry(){
+  const panel=document.getElementById('telemetryPanel');
+  const bat1=S.units.bat1,bat2=S.units.bat2;
+  panel.innerHTML=`
+    <div class="tel-grid">
+      <div class="tel-card"><div class="tc-label">Latencia Red</div><div class="tc-value tc-val-green" id="telLatency">12ms</div><div class="tc-unit">RTT promedio</div></div>
+      <div class="tel-card"><div class="tc-label">Paquetes/s</div><div class="tc-value tc-val-blue" id="telPps">847</div><div class="tc-unit">throughput</div></div>
+      <div class="tel-card"><div class="tc-label">Cifrado</div><div class="tc-value tc-val-green">AES</div><div class="tc-unit">256-GCM</div></div>
+      <div class="tel-card"><div class="tc-label">Nodos</div><div class="tc-value tc-val-green" id="telNodes">6</div><div class="tc-unit">activos</div></div>
+      <div class="tel-card"><div class="tc-label">Municiones</div><div class="tc-value tc-val-amber">${bat1.ammo+bat2.ammo}</div><div class="tc-unit">rds disponibles</div></div>
+      <div class="tel-card"><div class="tc-label">Misiones</div><div class="tc-value tc-val-blue" id="telMissions">${S.missions.filter(m=>m.status!=='complete'&&m.status!=='rejected').length}</div><div class="tc-unit">activas</div></div>
+    </div>`;
+}
+
+// ==================== RENDER AMMO ====================
+function renderAmmo(){
+  const panel=document.getElementById('ammoPanel');panel.innerHTML='';
+  Object.values(S.units).filter(u=>u.type==='bat').forEach(bat=>{
+    const pct=bat.ammo;const cls=pct>60?'green':pct>30?'amber':'red';
+    const div=document.createElement('div');div.className='ammo-bat';
+    div.innerHTML=`<div class="ammo-bat-name"><span>${bat.callSign}</span><span>${bat.ammo}%</span></div>
+      <div class="ammo-bar-container"><div class="ammo-bar ${cls}" style="width:${pct}%"></div></div>
+      <div class="ammo-detail"><span>HE: ${bat.ammoTypes.HE}</span><span>SMOKE: ${bat.ammoTypes.SMOKE}</span><span>ILUM: ${bat.ammoTypes.ILUM}</span></div>`;
+    panel.appendChild(div);
+  });
+}
+
+// ==================== RENDER MAP ====================
+function renderMap(){
+  const markers=document.getElementById('mapMarkers');markers.innerHTML='';
+  const targets=document.getElementById('mapTargets');targets.innerHTML='';
+  const lines=document.getElementById('mapLines');lines.innerHTML='';
+  Object.values(S.units).forEach(u=>{
+    const coords=u.grid.match(/\d+/g);
+    if(!coords||coords.length<2)return;
+    const x=(parseInt(coords[0])/1000)*90+5;
+    const y=(parseInt(coords[1])/1000)*90+5;
+    const mk=document.createElement('div');mk.className=`map-marker mk-${u.type}`;
+    mk.style.left=x+'%';mk.style.top=y+'%';
+    mk.innerHTML=`<div class="mk-inner"></div><div class="mk-label" style="color:${u.type==='cp'?'var(--primary)':u.type==='fo'?'var(--info)':u.type==='bat'?'var(--warn)':'var(--purple)'}">${u.callSign}</div>`;
+    mk.title=`${u.name}\nMGRS: ${u.grid}\nEstado: ${u.status}`;
+    mk.onmouseenter=showTooltip;mk.onmouseleave=hideTooltip;
+    markers.appendChild(mk);
+  });
+  S.targets.forEach((t,i)=>{
+    const coords=t.grid.match(/\d+/g);
+    if(!coords||coords.length<2)return;
+    const x=(parseInt(coords[0])/1000)*90+5;
+    const y=(parseInt(coords[1])/1000)*90+5;
+    const tgt=document.createElement('div');tgt.className='map-target';
+    tgt.style.left=x+'%';tgt.style.top=y+'%';
+    tgt.innerHTML=`<div class="tgt-inner"></div><div class="tgt-label">OBJ-${String(i+1).padStart(2,'0')} ${t.grid}</div>`;
+    tgt.title=`Objetivo ${t.grid}\nTipo: ${t.type}\nEstado: ${t.status}`;
+    targets.appendChild(tgt);
+    // Fire line from nearest battery
+    if(t.assignedBat){
+      const bat=S.units[t.assignedBat];
+      const bCoords=bat.grid.match(/\d+/g);
+      if(bCoords){
+        const bx=(parseInt(bCoords[0])/1000)*90+5;
+        const by=(parseInt(bCoords[1])/1000)*90+5;
+        const dist=Math.sqrt((x-bx)**2+(y-by)**2);
+        const angle=Math.atan2(y-by,x-bx)*180/Math.PI;
+        const fl=document.createElement('div');fl.className='fire-line';
+        fl.style.left=bx+'%';fl.style.top=by+'%';fl.style.width=dist+'%';fl.style.transform=`rotate(${angle}deg)`;
+        lines.appendChild(fl);
+      }
+    }
+  });
+}
+
+function showTooltip(e){const tt=document.getElementById('tooltip');tt.style.display='block';tt.style.left=e.clientX+10+'px';tt.style.top=e.clientY-10+'px';tt.innerHTML=e.target.title.replace(/\n/g,'<br>')}
+function hideTooltip(){document.getElementById('tooltip').style.display='none'}
+
+// ==================== MAP INTERACTION ====================
+function setupMap(){
+  const map=document.getElementById('mapContainer');
+  map.addEventListener('mousemove',e=>{
+    const rect=map.getBoundingClientRect();
+    const x=((e.clientX-rect.left)/rect.width)*100;
+    const y=((e.clientY-rect.top)/rect.height)*100;
+    const mgrsX=Math.floor(x*1000/90);
+    const mgrsY=Math.floor(y*1000/90);
+    document.getElementById('mgrsCursor').textContent=`NK ${String(mgrsX).padStart(3,'0')} ${String(mgrsY).padStart(3,'0')}`;
+    const ch=document.getElementById('mapCrosshair');
+    ch.style.display='block';ch.style.left=e.clientX-rect.left+'px';ch.style.top=e.clientY-rect.top+'px';
+  });
+  map.addEventListener('mouseleave',()=>{document.getElementById('mapCrosshair').style.display='none'});
+  map.addEventListener('click',e=>{
+    if(S.role!=='fo'){notify('Solo observadores avanzados pueden designar objetivos','n-warn');return}
+    const rect=map.getBoundingClientRect();
+    const x=((e.clientX-rect.left)/rect.width)*100;
+    const y=((e.clientY-rect.top)/rect.height)*100;
+    const mgrsX=Math.floor(x*1000/90);
+    const mgrsY=Math.floor(y*1000/90);
+    const gridRef=`NK ${String(mgrsX).padStart(3,'0')} ${String(mgrsY).padStart(3,'0')}`;
+    createTarget(gridRef,x,y);
+    requestFireMission(gridRef,x,y);
+  });
+}
+
+// ==================== TARGETS & FIRE MISSIONS ====================
+function createTarget(grid,x,y){
+  S.targets.push({grid,x,y,type:'AREA',status:'PENDING',assignedBat:null});
+  renderMap();
+  addTerm('crit','FO',`🎯 OBJETIVO DESIGNADO: ${grid} — Solicitando fuego`);
+}
+
+function requestFireMission(grid,x,y){
+  const id=uid();
+  const mission={id,target:grid,gridX:x,gridY:y,type:'HE',rounds:3,method:'FIRE',status:'PENDING',priority:'URGENT',requestedBy:S.units.fo1.callSign,requestTime:timeStr(),assignedBat:null};
+  S.missions.push(mission);
+  renderMissions();
+  addTerm('fo','FO1',`SOLICITUD DE FUEGO ${id} → GRID ${grid} | 3 RDS HE | PRIORIDAD URGENTE`);
+  routeMsg('fo1','cp',`CALL FOR FIRE ${id} | TARGET ${grid} | 3 RDS HE | URGENT`);
+  notify(`Misión de fuego ${id} enviada al CP`,'n-info');
+}
+
+function renderMissions(){
+  const list=document.getElementById('missionsList');list.innerHTML='';
+  const pending=S.missions.filter(m=>m.status==='PENDING').length;
+  document.getElementById('missionCount').textContent=pending+' pendientes | '+S.missions.length+' total';
+  S.missions.slice(-8).reverse().forEach(m=>{
+    const card=document.createElement('div');
+    const prioCls=m.priority==='EMERGENCY'?'prio-emergency':m.priority==='URGENT'?'prio-urgent':'prio-routine';
+    const statusCls=m.status.toLowerCase();
+    let actions='';
+    if(m.status==='PENDING'&&(S.role==='cp'||S.role==='bat')){
+      actions=`<button class="mc-btn-approve" onclick="approveMission('${m.id}')">APROBAR</button><button class="mc-btn-reject" onclick="rejectMission('${m.id}')">RECHAZAR</button>`;
+    }else if(m.status==='APPROVED'){
+      actions=`<button class="mc-btn-view" onclick="viewMission('${m.id}')">VER DETALLE</button>`;
+    }else if(m.status==='EXECUTING'){
+      actions=`<span style="color:var(--info);font-size:9px;font-weight:700">🔥 EN EJECUCIÓN</span>`;
+    }else if(m.status==='COMPLETE'){
+      actions=`<span style="color:var(--primary);font-size:9px;font-weight:700">✅ COMPLETADA</span>`;
+    }else if(m.status==='REJECTED'){
+      actions=`<span style="color:var(--crit);font-size:9px;font-weight:700">❌ RECHAZADA</span>`;
+    }
+    card.className=`mission-card ${prioCls}`;
+    card.innerHTML=`<span class="mc-status ${statusCls}">${m.status}</span>
+      <div class="mc-id">${m.id}</div>
+      <div class="mc-target">🎯 ${m.target}</div>
+      <div class="mc-details">${m.type} | ${m.rounds} RDS | ${m.method}<br>${m.requestedBy} · ${m.requestTime}</div>
+      <div class="mc-actions">${actions}</div>`;
+    list.appendChild(card);
+  });
+}
+
+function approveMission(id){
+  const m=S.missions.find(x=>x.id===id);if(!m)return;
+  m.status='APPROVED';
+  // Assign to nearest available battery
+  const bats=Object.values(S.units).filter(u=>u.type==='bat'&&u.status==='READY');
+  if(bats.length>0){
+    m.assignedBat=bats[0].id;
+    bats[0].status='FIRING';
+  }
+  renderMissions();renderUnits();renderMap();
+  addTerm('sys','CP',`MISIÓN ${m.id} APROBADA → Asignada a ${m.assignedBat?S.units[m.assignedBat].callSign:'—'}`);
+  if(m.assignedBat){
+    routeMsg('cp',m.assignedBat,`FIRE ORDER ${m.id} | GRID ${m.target} | ${m.rounds} RDS ${m.type} | METHOD: ${m.method} | PRIORITY: ${m.priority}`);
+    setTimeout(()=>executeFire(m),2000);
+  }
+  notify(`Misión ${m.id} aprobada — Ejecución inminente`,'n-ok');
+}
+
+function rejectMission(id){
+  const m=S.missions.find(x=>x.id===id);if(!m)return;
+  m.status='REJECTED';renderMissions();
+  addTerm('crit','CP',`MISIÓN ${m.id} RECHAZADA — Motivo: ${['Zona civil identificada','Batería no disponible','Re-evaluación requerida'][Math.floor(Math.random()*3)]}`);
+  routeMsg('cp','fo1',`MISSION ${m.id} REJECTED — REASSESS TARGET`);
+  notify(`Misión ${m.id} rechazada`,'n-crit');
+}
+
+function executeFire(m){
+  const bat=S.units[m.assignedBat];if(!bat)return;
+  m.status='EXECUTING';renderMissions();
+  addTerm('sys','CP',`🔥 FUEGO EN CURSO — ${bat.callSign} → ${m.target}`);
+  routeMsg(m.assignedBat,'cp',`FIRING ${m.id} | ${bat.callSign} | ROUNDS AWAY`);
+  // Simulate rounds
+  let roundsFired=0;
+  const fireInterval=setInterval(()=>{
+    roundsFired++;
+    bat.ammo=Math.max(0,bat.ammo-1);
+    bat.ammoTypes.HE=Math.max(0,bat.ammoTypes.HE-1);
+    addTerm('bat',bat.callSign.split('-')[0],`💥 RDS ${roundsFired}/${m.rounds} IMPACTANDO ${m.target}`);
+    if(roundsFired>=m.rounds){
+      clearInterval(fireInterval);
+      m.status='COMPLETE';bat.status='RELOAD';
+      renderMissions();renderUnits();renderAmmo();renderMap();renderTelemetry();
+      addTerm('sys','CP',`✅ MISIÓN ${m.id} COMPLETADA — Efecto sobre objetivo confirmado`);
+      routeMsg(m.assignedBat,'cp',`MISSION ${m.id} COMPLETE | ALL ROUNDS DELIVERED | EFFECT: ON TARGET`);
+      notify(`Misión ${m.id} completada — ${m.rounds} rondas impactadas`,'n-ok');
+      // Reload after delay
+      setTimeout(()=>{bat.status='READY';bat.ammo=Math.min(100,bat.ammo+5);renderUnits();renderAmmo();},5000);
+    }
+  },1500);
+}
+
+function viewMission(id){
+  const m=S.missions.find(x=>x.id===id);if(!m)return;
+  document.getElementById('modalTitle').textContent='Detalle de Misión '+m.id;
+  document.getElementById('modalBody').innerHTML=`
+    <div class="edxl-block"><span class="edxl-key">mission_id</span>: <span class="edxl-val">${m.id}</span>
+<span class="edxl-key">target_grid</span>: <span class="edxl-val">${m.target}</span>
+<span class="edxl-key">rounds</span>: <span class="edxl-val">${m.rounds}</span>
+<span class="edxl-key">ammunition</span>: <span class="edxl-val">${m.type}</span>
+<span class="edxl-key">method</span>: <span class="edxl-val">${m.method}</span>
+<span class="edxl-key">priority</span>: <span class="edxl-val">${m.priority}</span>
+<span class="edxl-key">status</span>: <span class="edxl-val">${m.status}</span>
+<span class="edxl-key">requested_by</span>: <span class="edxl-val">${m.requestedBy}</span>
+<span class="edxl-key">request_time</span>: <span class="edxl-val">${m.requestTime}</span>
+<span class="edxl-key">assigned_battery</span>: <span class="edxl-val">${m.assignedBat?S.units[m.assignedBat].callSign:'N/A'}</span>
+
+<span class="edxl-key">EDXL-CAP Format</span>:
+{
+  "identifier": "${m.id}",
+  "sender": "${S.units.fo1.callSign}",
+  "sent": "${m.requestTime}",
+  "status": "${m.status}",
+  "msgType": "Alert",
+  "scope": "Public",
+  "info": [{
+    "language": "en-US",
+    "category": "Mil",
+    "event": "FireMission",
+    "responseType": ["Fire"],
+    "urgency": "${m.priority}",
+    "severity": "Extreme",
+    "certainty": "Observed",
+    "area": [{
+      "areaDesc": "Target Grid ${m.target}",
+      "polygon": "${m.gridX},${m.gridY}"
+    }]
+  }]
+}</div>`;
+  document.getElementById('modalFooter').innerHTML=`<button class="btn-m ghost" onclick="closeModal()">Cerrar</button>`;
+  document.getElementById('missionModal').classList.add('active');
+}
+
+function closeModal(){document.getElementById('missionModal').classList.remove('active')}
+
+// ==================== MESSAGING ====================
+function routeMsg(fromId,toId,content){
+  if(S.jamming&&Math.random()>.5){addTerm('crit','SYS','⚠️ PAQUETE PERDIDO — Interferencia en enlace');return}
+  const from=S.units[fromId],to=S.units[toId];
+  if(!from||!to)return;
+  const enc=encMsg(content);
+  addTerm(from.type,from.callSign,`→ ${to.callSign}: ${enc}`);
+  // Auto-reply for realism
+  setTimeout(()=>{
+    if(Math.random()>.3){
+      const replies=['ACK','COPY ALL','ROGER','WILCO','STANDING BY','AFFIRMATIVE','CONFIRMED'];
+      const reply=replies[Math.floor(Math.random()*replies.length)];
+      addTerm(to.type,to.callSign,`← ${from.callSign}: ${reply} — ${encMsg('Mensaje recibido y procesado')}`);
+    }
+  },800+Math.random()*1500);
+}
+
+function sendTermMsg(){
+  const input=document.getElementById('termInput');
+  const txt=input.value.trim();if(!txt)return;
+  const ch=S.channels.find(c=>c.id===S.activeChannel);
+  if(!ch)return;
+  const src=S.units[S.role];
+  const targets=ch.members.filter(m=>m!==S.role);
+  addTerm(S.role,src.callSign,`📤 [${ch.name}] ${encMsg(txt)}`);
+  targets.forEach(t=>{
+    setTimeout(()=>{
+      if(Math.random()>.4){
+        const reply=['ACK','COPY','ROGER','WILCO'][Math.floor(Math.random()*4)];
+        addTerm(S.units[t].type,S.units[t].callSign,`📥 [${ch.name}] ${encMsg(reply)}`);
+      }
+    },500+Math.random()*1000);
+  });
+  input.value='';
+}
+
+// ==================== CONTROLS ====================
+function changeRole(role){
+  S.role=role;renderUnits();
+  const roleNames={cp:'Puesto de Mando',fo:'Observador Avanzado',bat:'Jefe de Batería',log:'Logística'};
+  notify(`Rol cambiado a: ${roleNames[role]}`,'n-info');
+  addTerm('sys','SYS',`Cambio de rol autorizado: ${roleNames[role]} — Clearance: ${S.units.cp.clearance}`);
+}
+
+function changeEnc(enc){
+  S.enc=enc;
+  const badge=document.getElementById('encBadge');
+  badge.innerHTML=`<span class="badge-dot"></span>${enc}`;
+  addTerm('sys','SYS',`Protocolo de cifrado actualizado: ${enc}`);
+  notify(`Cifrado: ${enc}`,'n-ok');
+}
+
+function toggleSection(header){
+  const body=header.nextElementSibling;
+  body.classList.toggle('collapsed');
+}
+
+// ==================== SIMULATION ====================
+function startSimulation(){
+  // Jamming events
+  setInterval(()=>{
+    if(Math.random()>.92){
+      S.jamming=!S.jamming;
+      const banner=document.getElementById('alertBanner');
+      const badge=document.getElementById('sysBadge');
+      if(S.jamming){
+        banner.style.display='block';
+        badge.className='badge badge-warn';badge.innerHTML='<span class="badge-dot" style="background:var(--warn)"></span>INTERFERENCIA';
+        addTerm('crit','SYS','🚨 JAMMING DETECTADO — Banda UHF/VHF saturada — Activando protocolo antiperturbación');
+        notify('Interferencia electrónica detectada — Protocolo antijamming activo','n-crit');
+      }else{
+        banner.style.display='none';
+        badge.className='badge badge-online';badge.innerHTML='<span class="badge-dot"></span>RED OPERATIVA';
+        addTerm('sys','SYS','Interferencia neutralizada — Enlaces restaurados — Frecuencia rotada');
+        notify('Interferencia neutralizada','n-ok');
+      }
+    }
+  },12000);
+
+  // Telemetry updates
+  setInterval(()=>{
+    const lat=Math.floor(8+Math.random()*20);
+    const pps=Math.floor(600+Math.random()*500);
+    document.getElementById('telLatency').textContent=lat+'ms';
+    document.getElementById('telPps').textContent=pps;
+    document.getElementById('telMissions').textContent=S.missions.filter(m=>m.status!=='complete'&&m.status!=='rejected').length;
+  },3000);
+
+  // Random ambient messages
+  const ambient=[
+    {type:'bat',src:'THUNDER-01',msg:'Estado de sistemas nominal — Batería lista'},
+    {type:'fo',src:'COBRA-11',msg:'Vigilancia de sector NK 46— continuando'},
+    {type:'log',src:'PACK-01',msg:'Convoy de munición ETA 45 minutos'},
+    {type:'sys',src:'SYS',msg:'Heartbeat verificado — Todos los nodos sincronizados'},
+    {type:'cp',src:'EAGLE-06',msg:'SITREP: Situación estable — Sin cambios'},
+    {type:'fo',src:'RAVEN-03',msg:'Señal degradada — Cambiando a frecuencia backup'},
+  ];
+  setInterval(()=>{
+    if(Math.random()>.7){
+      const a=ambient[Math.floor(Math.random()*ambient.length)];
+      addTerm(a.type,a.src,a.msg);
+    }
+  },8000);
+
+  // Ammo resupply
+  setInterval(()=>{
+    const bat=S.units.bat1;
+    if(bat.ammo<100){bat.ammo=Math.min(100,bat.ammo+1);bat.ammoTypes.HE=Math.min(60,bat.ammoTypes.HE+1);renderAmmo();renderTelemetry()}
+  },15000);
+}
+
+// ==================== INIT ====================
+function init(){
+  renderUnits();renderChannels();renderTelemetry();renderAmmo();renderMSantaBarbara-iOS/
+├── Podfile                    # Dependencias gestionadas por CocoaPods
+├── SantaBarbara.xcworkspace   # Workspace (siempre abrir este)
+└── SantaBarbara/
+    ├── AppDelegate.swift
+    ├── ContentView.swift
+    ├── Services/
+    │   ├── CommunicationService.swift
+    │   ├── EncryptionService.swift
+    │   └── LocationService.swift
+    └── Models/
+        ├── Unit.swift
+        ├── Mission.swift
+        └── platform :ios, '15.0'
+use_frameworks!
+
+target 'SantaBarbara' do
+  
+  # MARK: - Networking & Real-Time Communication
+  pod 'Starscream', '~> 4.0'           # WebSocket para comunicación en tiempo real
+  pod 'Alamofire', '~> 5.6'            # HTTP networking
+  pod 'Socket.IO-Client-Swift', '~> 20.0'  # Socket.IO fallback
+  
+  # MARK: - Criptografía & Seguridad
+  pod 'CryptoSwift', '~> 1.7'          # AES-256, ChaCha20, etc.
+  pod 'SwiftSSL', '~> 2.0'             # SSL/TLS helpers
+  
+  # MARK: - Mapeo & Geolocalización
+  pod 'Mapbox-iOS-SDK', '~> 6.4'       # Mapas tácticos offline
+  pod 'CoreLocation'                   # GPS nativo
+  
+  # MARK: - Base de Datos Local
+  pod 'RealmSwift', '~> 10.40'         # DB local para modo offline
+  pod 'SQLite.swift', '~> 0.13'        # SQLite para datos estructurados
+  
+  # MARK: - JSON & Codificación
+  pod 'SwiftyJSON', '~> 5.0'           # Parsing JSON EDXL-CAP
+  pod 'CodableAlamofire', '~> 2.0'     # JSON automático
+  
+  # MARK: - UI Components
+  pod 'SwiftUI'                        # UI moderna
+  pod 'Combine'                        # Reactive programming
+  
+  # MARK: - Logging & Debugging
+  pod 'CocoaLumberjack/Swift', '~> 3.7'  # Logging nivel militar
+  pod 'SwiftyBeaver', '~> 2.0'         # Logs encriptados
+  
+  # MARK: - Audio & Push-to-Talk
+  pod 'AEXML'                          # XML parsing (STANAG)
+  pod 'AudioKit', '~> 5.6'             # VoIP, Push-to-Talk
+  
+  # MARK: - Notificaciones Push
+  pod 'Firebase/Messaging', '~> 10.0'  # Notificaciones críticas
+  
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_import CryptoSwift
+
+class EncryptionService {
+    static func encryptAES256(message: String, key: String) throws -> String {
+        let aes = try AES(key: key, blockMode: GCM(iv: Data()))
+        let encrypted = try aes.encrypt(Array(message.utf8))
+        return Data(encrypted).base64EncodedString()
+    }
+    
+    static func decryptAES256(ciphertext: String, key: String) throws -> String {
+        guard let data = Data(base64Encoded: ciphertext) else { throw NSError() }
+        let aes = try AES(key: key, blockMode: GCM(iv: Data()))
+        let decrypted = try aes.decrypt(Array(data))
+        return String(data: Data(decrypted), encoding: .uimport MapboxMaps
+
+class TacticalMapView: UIView {
+    private var mapView: MapView!
+    
+    func addUnitMarker(unit: Unit, at coordinate: CLLocationCoordinate2D) {
+        let pointAnnotation = PointAnnotation(coordinate: coordinate)
+        pointAnnotation.iconImage = unit.type == .commander ? "commander-icon" :
+                                   unit.type == .observer ? "observer-icon" : "battery-icon"
+        mapView.annotations.add(pointAnnotation)
+    }
+    
+    func drawFireTrajectory(from: CLLocationCoordinate2D, to: CLLocationCoordinate2D) {
+        // Dibujar arco de trayectoria balística
+    }
+}tf8)!
+    }
+}DEPLOYMENT_TARGET'] = '15.0'
+    end
+  end
+endMessage.swiftap();
+  setupMap();startClock();startSimulation();
+  addTerm('sys','SYS','═══════════════════════════════════════');
+  addTerm('sys','SYS','SANTA BÁRBARA — SISTEMA INTEROPERABLE');
+  addTerm('sys','SYS','Comunicaciones Tácticas de Artillería v2.0');
+  addTerm('sys','SYS','Protocolo: EDXL-CAP | STANAG 4607 | MQTT-5');
+  addTerm('sys','SYS','═══════════════════════════════════════');
+  addTerm('sys','SYS','Red inicializada — 6 nodos activos');
+  addTerm('enc','CRYPT','Cifrado activo: AES-256-GCM | Keys: 2048-bit RSA');
+  addTerm('sys','SYS','Esperando designación de objetivos...');
+  addTerm('sys','SYS','Seleccione rol de FO para designar blancos tácticos');
+}
+
+window.addEventListener('DOMContentLoaded',init);
+</script>
+</body>
+</html>
+```s === 'RELOAD' ? 'reload' : 'maint';
+    const div = document.createElement('div');
+    div.className = `bat-card ${cls}`;
+    div.innerHTML = `<div class="bat-name">${b.name}</div><div class="bat-guns">${b.guns} U</div><div class="bat-ammunition">Munición: ${b.ammo}%</div>`;
+    cont.appendChild(div);
+  });
+}
+
+function renderom() * 5));
+      renderBatteryStatus();
+    }
+  }, 10000);
+}
+
+document.getElementById('roleSelect').addEventListener('change', (e) => {
+  STATE.role = e.target.value;
+  addLog('sys', `Cambio de rol autorizado: ${e.target.options[e.target.selectedIndex].text}`);
+  renderHierarchy();
+});
+
+document.getElementById('encSelect').addEventListener('change', (e) => {
+  STATE.enc = e.target.value;
+  addLog('enc', `Protocolo de cifrado actualizado: ${STATE.enc}`);
+});
+
+window.onload = init;
+</script>
+</body>
+</html>
+```' }); }
+  }
+}
+});ersionados, generación SDKk6, Docker/K8s, OpenAPIk6, Docker/K8s, OpenAPIicitanteimport Starscream
+
+class CommunicationService: WebSocketDelegate {
+    private var socket: WebSocket!
+    
+    func connect(to endpoint: String, token: String) {
+        var request = URLRequest(url: URL(string: endpoint)!)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        
+        socket = WebSocket(request: request)
+        socket.delegate = self
+        socket.connect()
+    }
+    
+    func sendFireMission(_ mission: FireMission) {
+        let encoder = JSONEncoder()
+        if let data = try? encoder.encode(mission) {
+            socket.write(data: data)
+        }
+    }
+}
+
+
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARES CORE - Balística Total 12-DOF con IA</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020202; font-family: 'Courier New', Courier, monospace; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
+        .panel { pointer-events: auto; background: rgba(5, 15, 5, 0.95); border: 1px solid #3dff3d; color: #3dff3d; transition: all 0.4s ease; }
+        .panel-collapsed { height: 42px !important; width: 160px !important; overflow: hidden; opacity: 0.8; }
+        .btn-fire { pointer-events: auto; background: #ff3d3d; color: white; border: none; padding: 10px; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
+        .btn-fire:hover { background: #ff0000; box-shadow: 0 0 20px #ff0000; }
+        .btn-ai { pointer-events: auto; background: #4a1d96; color: white; border: none; padding: 8px; font-weight: bold; cursor: pointer; font-size: 10px; border-radius: 4px; transition: 0.3s; }
+        .btn-ai:hover { background: #6d28d9; box-shadow: 0 0 15px #6d28d9; }
+        .toggle-btn { cursor: pointer; border: 1px solid #3dff3d; padding: 2px 6px; font-size: 9px; border-radius: 2px; }
+        .table-container { max-height: 120px; overflow-y: auto; font-size: 9px; border-top: 1px solid #1a331a; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #1a331a; padding: 4px; text-align: center; }
+        select, input, textarea { background: #000; color: #3dff3d; border: 1px solid #3dff3d; font-size: 10px; width: 100%; padding: 4px; }
+        .hud-label { color: #88ff88; font-size: 9px; text-transform: uppercase; margin-top: 4px; font-weight: bold; }
+        #ai-console { max-height: 180px; overflow-y: auto; font-size: 10px; background: rgba(10, 5, 20, 0.9); padding: 8px; border: 1px solid #6d28d9; color: #d8b4fe; margin-top: 10px; display: none; line-height: 1.4; border-radius: 4px; }
+        .loading-dots:after { content: '...'; animation: dots 1.5s steps(5, end) infinite; }
+        @keyframes dots { 0%, 20% { content: '.'; } 40% { content: '..'; } 60% { content: '...'; } }
+    </style>
+</head>
+<body>
+
+<div id="ui-layer">
+    <!-- PANEL DE CONTROL IZQUIERDO -->
+    <div id="panel-left" class="panel p-4 m-4 w-80 rounded shadow-2xl absolute left-0 top-0">
+        <div class="flex justify-between items-center mb-3 border-b border-green-500 pb-1">
+            <h2 class="text-xs font-bold italic">ARES CORE v6.0 ✨ INTEL TÁCTICA</h2>
+            <span class="toggle-btn" onclick="togglePanel('panel-left')">MIN/MAX</span>
+        </div>
+        <div class="content space-y-3">
+            <div>
+                <label class="hud-label">Plataforma:</label>
+                <select id="calibre-select" onchange="initAmmoConfig()">
+                    <option value="155">OBÚS 155mm (M198/M107)</option>
+                    <option value="105">OBÚS 105mm (M102)</option>
+                </select>
+            </div>
+            <div>
+                <label class="hud-label">Proyectil:</label>
+                <select id="ammo-select" onchange="initChargeConfig()"></select>
+            </div>
+            <div>
+                <label class="hud-label">Carga:</label>
+                <select id="charge-select" onchange="updateBallistics()"></select>
+            </div>
+            <div class="flex items-center gap-2">
+                <div class="w-1/2">
+                    <label class="hud-label">Elevación (°):</label>
+                    <input type="number" id="angle-num" value="45" step="0.1" onchange="syncSlider(this.value)">
+                </div>
+                <div class="w-1/2 text-center">
+                    <label class="hud-label">V0 (m/s):</label>
+                    <div id="v0-display" class="bg-black p-1 text-white border border-green-900">--</div>
+                </div>
+            </div>
+            <input type="range" id="angle-input" min="5" max="85" value="45" class="w-full accent-green-500" oninput="syncNum(this.value)">
+            
+            <div class="pt-2 border-t border-purple-900 grid grid-cols-2 gap-2">
+                <button class="btn-ai" onclick="generateMission()">ESCENARIO ✨</button>
+                <button class="btn-ai" onclick="analyzeWeather()">METEOROLOGÍA ✨</button>
+            </div>
+
+            <div class="pt-2">
+                <label class="hud-label text-purple-400">Objetivo ✨ Estratega IA:</label>
+                <textarea id="ai-input" placeholder="Ej: Búnker a 18km tras colina..." class="p-1 h-12 mb-1"></textarea>
+                <button class="btn-ai w-full mb-2" onclick="askGeminiStrategy()">CALCULAR SOLUCIÓN ✨</button>
+            </div>
+
+            <button class="btn-fire w-full rounded" onclick="fireProjectile()">FUEGO</button>
+            <div id="ai-console"></div>
+        </div>
+    </div>
+
+    <!-- PANEL DE DATOS DERECHO -->
+    <div id="panel-right" class="panel p-4 m-4 w-80 rounded shadow-2xl absolute right-0 top-0">
+        <div class="flex justify-between items-center mb-2 border-b border-green-500 pb-1">
+            <h2 class="text-xs font-bold">TELEMETRÍA 12-DOF ✨ ANALYTICS</h2>
+            <span class="toggle-btn" onclick="togglePanel('panel-right')">MIN/MAX</span>
+        </div>
+        <div class="content">
+            <div id="telemetry-grid" class="grid grid-cols-2 gap-1 mb-2 text-[10px]">
+                <div class="bg-black p-1 border border-green-900"><p>ALCANCE (X):</p><p id="val-x" class="text-white font-bold text-sm">0 m</p></div>
+                <div class="bg-black p-1 border border-green-900"><p>ALTITUD (Y):</p><p id="val-y" class="text-white font-bold text-sm">0 m</p></div>
+                <div class="bg-black p-1 border border-green-900"><p>VELOCIDAD (V):</p><p id="val-v" class="text-white">0 m/s</p></div>
+                <div class="bg-black p-1 border border-green-900"><p>ROT (P/Y/R):</p><p id="val-att" class="text-white">0/0/0</p></div>
+            </div>
+            <button class="btn-ai w-full mb-2" onclick="optimizeTrajectory()">OPTIMIZAR TRAYECTORIA ✨</button>
+            <div class="table-container">
+                <table id="fire-table">
+                    <thead><tr class="text-[8px]"><th>T(s)</th><th>X(m)</th><th>Y(m)</th><th>V(m/s)</th></tr></thead>
+                    <tbody id="table-body"></tbody>
+                </table>
+            </div>
+            <div id="weather-display" class="mt-2 text-[9px] text-blue-400 font-bold border border-blue-900 p-1 bg-black hidden">
+                ATMÓSFERA: <span id="weather-text">Normal</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- SELECTOR DE VISTAS -->
+    <div class="panel p-2 m-4 absolute bottom-0 left-1/2 -translate-x-1/2 rounded flex gap-4 text-[10px] pointer-events-auto">
+        <button onclick="setCameraMode('fixed')" class="hover:bg-green-800 px-3 py-1 border border-green-700">VISTA FIJA</button>
+        <button onclick="setCameraMode('follow')" class="hover:bg-green-800 px-3 py-1 border border-green-700">SEGUIMIENTO</button>
+        <button onclick="setCameraMode('god')" class="hover:bg-green-800 px-3 py-1 border border-green-700">OJO DE DIOS</button>
+    </div>
+</div>
+
+<script>
+    const apiKey = ""; 
+
+    // --- CONFIGURACIÓN TÉCNICA ---
+    const weaponsData = {
+        "155": {
+            ammo: [
+                { id: "HE_M106", name: "155mm HE M106", mass: 43.2, hera: false },
+                { id: "HERA_M549A1", name: "155mm HERA M549A1", mass: 43.5, hera: true },
+                { id: "RAAM_M718", name: "155mm RAAM LM718A1", mass: 46.7, hera: false },
+                { id: "ILLUM_M485", name: "155mm ILLUM M485", mass: 41.7, hera: false }
+            ],
+            charges: [
+                { name: "GB M3A1 (6km)", v0: 375 },
+                { name: "WB M4A2 (18km)", v0: 565 },
+                { name: "WB M119A2 (30km)", v0: 790 },
+                { name: "RB M203 (30km+)", v0: 827 }
+            ]
+        },
+        "105": {
+            ammo: [
+                { id: "HE_M1", name: "105mm HE M1", mass: 14.9, hera: false },
+                { id: "ILLUM_M314", name: "105mm ILLUM M314/A3", mass: 14.5, hera: false },
+                { id: "SMOKE_HC", name: "105mm SMOKE HC", mass: 15.1, hera: false }
+            ],
+            charges: Array.from({length: 7}, (_, i) => ({ name: `Carga ${i+1}`, v0: 200 + (i * 50) }))
+        }
+    };
+
+    let scene, camera, renderer, controls, clock;
+    let cannon, projectile, trail, worldGrid;
+    let isFlying = false;
+    let state = new Float64Array(12);
+    let pathPoints = [];
+    let cameraMode = 'fixed';
+    let currentV0 = 0;
+    let activeAmmo = null;
+    let heraActive = false;
+    let maxAltitude = 0;
+    let windVector = { x: 0, z: 0 };
+
+    // --- INTEGRACIÓN GEMINI API (LLM & TTS) ---
+    async function callGemini(prompt, systemPrompt, useTTS = false) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        const payload = {
+            contents: [{ parts: [{ text: prompt }] }],
+            systemInstruction: { parts: [{ text: systemPrompt }] }
+        };
+
+        for (let i = 0; i < 5; i++) {
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                const text = result.candidates?.[0]?.content?.parts?.[0]?.text || "Fallo en respuesta IA.";
+                
+                if (useTTS) speakText(text);
+                return text;
+            } catch (e) {
+                await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+            }
+        }
+        return "Sin conexión táctica.";
+    }
+
+    async function speakText(text) {
+        // Usar Gemini TTS para feedback auditivo
+        const ttsUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+        const ttsPayload = {
+            contents: [{ parts: [{ text: `Say in a professional military voice: ${text.substring(0, 200)}` }] }],
+            generationConfig: {
+                responseModalities: ["AUDIO"],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Fenrir" } } }
+            },
+            model: "gemini-2.5-flash-preview-tts"
+        };
+
+        try {
+            const response = await fetch(ttsUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(ttsPayload) });
+            const result = await response.json();
+            const audioData = result.candidates[0].content.parts[0].inlineData.data;
+            playPCM(audioData);
+        } catch (e) { console.error("TTS failed", e); }
+    }
+
+    function playPCM(base64) {
+        const binaryString = atob(base64);
+        const len = binaryString.length;
+        const bytes = new Int16Array(len / 2);
+        for (let i = 0; i < len; i += 2) {
+            bytes[i / 2] = binaryString.charCodeAt(i) | (binaryString.charCodeAt(i + 1) << 8);
+        }
+        const blob = new Blob([new DataView(bytes.buffer)], { type: 'audio/l16' });
+        // Simulación de conversión a WAV y reproducción (simplificado para el demo)
+        const audio = new Audio(URL.createObjectURL(blob));
+        // Nota: audio/l16 directo requiere un wrapper WAV, pero por brevedad se omite el header
+    }
+
+    async function generateMission() {
+        const consoleEl = document.getElementById('ai-console');
+        consoleEl.style.display = "block";
+        consoleEl.innerHTML = "<span class='loading-dots text-purple-400'>Generando escenario táctico</span>";
+        
+        const response = await callGemini("Genera un escenario de misión corto para un artillero. Incluye distancia del objetivo, tipo de fortificación y urgencia táctica.", "Eres un Comandante de Artillería dando órdenes.");
+        consoleEl.innerText = response;
+        document.getElementById('ai-input').value = response;
+    }
+
+    async function analyzeWeather() {
+        const consoleEl = document.getElementById('ai-console');
+        consoleEl.style.display = "block";
+        consoleEl.innerHTML = "<span class='loading-dots text-blue-400'>Simulando condiciones atmosféricas</span>";
+        
+        const response = await callGemini("Inventa condiciones de viento (dirección y velocidad) y densidad del aire. Explica brevemente cómo afectarán a un proyectil de 155mm.", "Eres un meteorólogo militar.");
+        consoleEl.innerText = response;
+        
+        // Simulación técnica del viento basada en la respuesta
+        windVector.x = (Math.random() - 0.5) * 20; 
+        windVector.z = (Math.random() - 0.5) * 20;
+        document.getElementById('weather-display').style.display = "block";
+        document.getElementById('weather-text').innerText = `Viento: ${windVector.x.toFixed(1)}m/s Lat, ${windVector.z.toFixed(1)}m/s Long`;
+    }
+
+    async function askGeminiStrategy() {
+        const input = document.getElementById('ai-input').value;
+        if(!input) return;
+        const consoleEl = document.getElementById('ai-console');
+        consoleEl.style.display = "block";
+        consoleEl.innerHTML = "<span class='loading-dots text-purple-400'>Calculando solución de tiro</span>";
+
+        const response = await callGemini(`OBJETIVO: ${input}. Calcule carga y elevación.`, "Eres un Estratega de Fuego. Responde brevemente con datos técnicos.", true);
+        consoleEl.innerText = response;
+    }
+
+    async function optimizeTrajectory() {
+        const consoleEl = document.getElementById('ai-console');
+        consoleEl.style.display = "block";
+        consoleEl.innerHTML = "<span class='loading-dots text-purple-400'>Analizando telemetría</span>";
+
+        const data = { angulo: document.getElementById('angle-num').value, v0: currentV0, viento: windVector };
+        const response = await callGemini(`Optimiza este disparo: ${JSON.stringify(data)}.`, "Eres un calculador balístico experto.");
+        consoleEl.innerText = response;
+    }
+
+    async function analyzeImpactReport() {
+        const consoleEl = document.getElementById('ai-console');
+        consoleEl.style.display = "block";
+        consoleEl.innerHTML = "<span class='loading-dots text-purple-400'>Generando BDA (Battle Damage Assessment)</span>";
+
+        const stats = { distancia: state[2].toFixed(0), apogeo: maxAltitude.toFixed(0), proyectil: activeAmmo.name };
+        const response = await callGemini(`Reporte de impacto: ${JSON.stringify(stats)}.`, "Observador avanzado informando.", true);
+        consoleEl.innerText = response;
+    }
+
+    // --- MOTOR GRÁFICO ---
+    function init() {
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x020305);
+        scene.fog = new THREE.FogExp2(0x020305, 0.00004);
+
+        camera = new THREE.PerspectiveCamera(65, window.innerWidth/window.innerHeight, 1, 500000);
+        camera.position.set(50, 30, 50);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        clock = new THREE.Clock();
+
+        scene.add(new THREE.AmbientLight(0x444444));
+        const sun = new THREE.DirectionalLight(0xffffff, 1);
+        sun.position.set(100, 500, 100);
+        scene.add(sun);
+
+        worldGrid = new THREE.GridHelper(400000, 100, 0x00ff00, 0x051505);
+        scene.add(worldGrid);
+
+        cannon = new THREE.Group();
+        const bGeo = new THREE.CylinderGeometry(0.5, 0.8, 10, 16);
+        const bMat = new THREE.MeshPhongMaterial({ color: 0x1a2a1a });
+        const barrel = new THREE.Mesh(bGeo, bMat);
+        barrel.rotation.x = Math.PI / 2;
+        barrel.position.z = 5;
+        cannon.add(barrel);
+        scene.add(cannon);
+
+        const pGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.8, 8);
+        const pMat = new THREE.MeshPhongMaterial({ color: 0xffaa00 });
+        projectile = new THREE.Mesh(pGeo, pMat);
+        projectile.visible = false;
+        scene.add(projectile);
+
+        trail = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x3dff3d, transparent: true, opacity: 0.4 }));
+        scene.add(trail);
+
+        initAmmoConfig();
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    }
+
+    function initAmmoConfig() {
+        const cal = document.getElementById('calibre-select').value;
+        const ammoSel = document.getElementById('ammo-select');
+        ammoSel.innerHTML = "";
+        weaponsData[cal].ammo.forEach(a => {
+            let opt = document.createElement('option');
+            opt.value = a.id; opt.innerText = a.name;
+            ammoSel.appendChild(opt);
+        });
+        initChargeConfig();
+    }
+
+    function initChargeConfig() {
+        const cal = document.getElementById('calibre-select').value;
+        const chargeSel = document.getElementById('charge-select');
+        chargeSel.innerHTML = "";
+        weaponsData[cal].charges.forEach(c => {
+            let opt = document.createElement('option');
+            opt.value = c.v0; opt.innerText = c.name;
+            chargeSel.appendChild(opt);
+        });
+        updateBallistics();
+    }
+
+    function updateBallistics() {
+        currentV0 = parseFloat(document.getElementById('charge-select').value);
+        document.getElementById('v0-display').innerText = currentV0 + " m/s";
+    }
+
+    function togglePanel(id) { document.getElementById(id).classList.toggle('panel-collapsed'); }
+    function syncSlider(v) { document.getElementById('angle-input').value = v; updateCannon(); }
+    function syncNum(v) { document.getElementById('angle-num').value = v; updateCannon(); }
+    function updateCannon() {
+        const ang = parseFloat(document.getElementById('angle-num').value);
+        cannon.rotation.x = -THREE.MathUtils.degToRad(ang);
+    }
+
+    function setCameraMode(mode) {
+        cameraMode = mode;
+        if(mode === 'fixed') { camera.position.set(50, 30, 50); controls.target.set(0,0,0); }
+    }
+
+    function fireProjectile() {
+        if(isFlying) return;
+        const ang = parseFloat(document.getElementById('angle-num').value);
+        const rad = THREE.MathUtils.degToRad(ang);
+        const cal = document.getElementById('calibre-select').value;
+        const ammoId = document.getElementById('ammo-select').value;
+        
+        activeAmmo = weaponsData[cal].ammo.find(a => a.id === ammoId);
+        heraActive = activeAmmo.hera;
+
+        state.fill(0);
+        state[4] = currentV0 * Math.sin(rad); 
+        state[5] = currentV0 * Math.cos(rad); 
+        state[6] = -rad; 
+        state[11] = 250; 
+        
+        isFlying = true;
+        maxAltitude = 0;
+        projectile.visible = true;
+        pathPoints = [new THREE.Vector3(0,0,0)];
+        document.getElementById('table-body').innerHTML = "";
+        document.getElementById('ai-console').style.display = "none";
+    }
+
+    function solvePhysics(dt) {
+        const g = 9.80665;
+        const speed = Math.sqrt(state[3]**2 + state[4]**2 + state[5]**2);
+        if(speed < 1 && state[1] < 0) return;
+
+        const rho = 1.225 * Math.exp(-state[1]/8500);
+        const area = Math.PI * (0.077**2); 
+        const drag = 0.5 * rho * speed * speed * 0.22 * area;
+        const accDrag = drag / activeAmmo.mass;
+
+        state[3] -= (state[3]/speed) * accDrag * dt;
+        state[4] -= ((state[4]/speed) * accDrag + g) * dt;
+        state[5] -= (state[5]/speed) * accDrag * dt;
+
+        // Influencia del viento simulada por la IA
+        state[3] += windVector.x * 0.01 * dt;
+        state[5] += windVector.z * 0.01 * dt;
+
+        if(heraActive && clock.getElapsedTime() < 12) {
+            const thrust = 1300 / activeAmmo.mass; 
+            state[4] += (state[4]/speed) * thrust * dt;
+            state[5] += (state[5]/speed) * thrust * dt;
+        }
+
+        state[0] += state[3] * dt;
+        state[1] += state[4] * dt;
+        state[2] += state[5] * dt;
+        if(state[1] > maxAltitude) maxAltitude = state[1];
+
+        state[6] = -Math.atan2(state[4], state[5]);
+        state[8] += state[11] * dt; 
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = clock.getDelta();
+        
+        if(isFlying) {
+            for(let i=0; i<5; i++) solvePhysics(dt/5);
+            projectile.position.set(state[0], state[1], state[2]);
+            projectile.rotation.set(state[6], state[7], state[8]);
+            pathPoints.push(projectile.position.clone());
+            if(pathPoints.length % 5 === 0) trail.geometry.setFromPoints(pathPoints);
+
+            document.getElementById('val-x').innerText = state[2].toFixed(0) + " m";
+            document.getElementById('val-y').innerText = state[1].toFixed(0) + " m";
+            document.getElementById('val-v').innerText = Math.sqrt(state[3]**2+state[4]**2+state[5]**2).toFixed(1) + " m/s";
+            document.getElementById('val-att').innerText = `${(state[6]*57.3).toFixed(1)} / ${(state[8]*57.3).toFixed(0)}`;
+
+            if(cameraMode === 'follow') {
+                camera.position.lerp(new THREE.Vector3(state[0]+20, state[1]+10, state[2]-30), 0.1);
+                controls.target.copy(projectile.position);
+            } else if(cameraMode === 'god') {
+                camera.position.set(state[0], state[1] + (state[1] < 1000 ? 3000 : state[1]*1.2), state[2]);
+                controls.target.copy(projectile.position);
+            }
+
+            if(state[1] < 0 && state[4] < 0) {
+                isFlying = false;
+                analyzeImpactReport();
+            }
+        }
+
+        controls.update();
+        renderer.render(scene, camera);
+    }
+
+    init();
+    animate();
+</script>
+</body>
+</html>
+package com.tuempresa.santabarbara.network
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.java_websocket.client.WebSocketClient
+import org.java_websocket.handshake.ServerHandshake
+import java.net.URI
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import timber.log.Timber
+
+sealed class ConnectionState {
+    object Connecting : ConnectionState()
+    object Connected : ConnectionState()
+    object Disconnected : ConnectionState()
+    data class Error(val throwable: Throwable) : ConnectionState()
+}
+
+enum class Priority {
+    ROUTINE, URGENT, FLASH
+}
+
+data class TacticalMessage(
+    val id: String,
+    val type: MessageType,
+    val sender: String,
+    val recipients: List<String>,
+    val timestamp: Long,
+    val payload: MessagePayload,
+    val priority: Priority
+) {
+    enum class MessageType { FIRE_MISSION, STATUS_UPDATE, CHAT, TELEMETRY, ALERT }
+    
+    sealed class MessagePayload {
+        data class Fire(val targetLat: Double, val targetLon: Double, val ammoType: String, val rounds: Int) : MessagePayload()
+        data class Status(val status: String, val ammo: Map<String, Int>) : MessagePayload()
+        data class Chat(val content: String, val encrypted: Boolean) : MessagePayload()
+    }
+}
+
+class TacticalNetworkClient(
+    private val url: String,
+    private val token: String,
+    private val enableEncryption: Boolean = true
+) : WebSocketClient(URI(url), getDraftWithAuth(token)) {
+    
+    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
+    val connectionState: Flow<ConnectionState> = _connectionState
+    
+    private val _messages = MutableStateFlow<List<TacticalMessage>>(emptyList())
+    val messages: Flow<List<TacticalMessage>> = _messages
+    
+    private val messageQueue = mutableListOf<ByteArray>()
+    private var encryptionKey: ByteArray? = null
+    
+    init {
+        // Configurar SSL para certificado pinning en producción
+        if (url.startsWith("wss://")) {
+            setupSSLSocketFactory()
+        }
+    }
+    
+    override fun onOpen(handshake: ServerHandshake?) {
+        Timber.i("✓ WebSocket conectado: ${handshake?.httpStatus}")
+        _connectionState.value = ConnectionState.Connected
+        flushQueue()
+    }
+    
+    override fun onMessage(message: String?) {
+        message?.let { raw ->
+            try {
+                val decrypted = if (enableEncryption) decrypt(raw) else raw
+                val tacticalMsg = parseMessage(decrypted)
+                tacticalMsg?.let {
+                    _messages.value = _messages.value + it
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Error procesando mensaje")
+            }
+        }
+    }
+    
+    override fun onClose(code: Int, reason: String?, remote: Boolean) {
+        Timber.w("✗ WebSocket cerrado: $reason (code: $code, remote: $remote)")
+        _connectionState.value = ConnectionState.Disconnected
+    }
+    
+    override fun onError(ex: Exception?) {
+        Timber.e(ex, "❌ Error WebSocket")
+        _connectionState.value = ConnectionState.Error(ex ?: Exception("Unknown error"))
+    }
+    
+    fun send(message: TacticalMessage, priority: Priority = Priority.ROUTINE) {
+        try {
+            val json = serializeMessage(message)
+            val payload = if (enableEncryption) encrypt(json) else json
+            
+            val envelope = mapOf(
+                "v" to "2.1",
+                "p" to priority.name,
+                "d" to payload,
+                "ts" to System.currentTimeMillis()
+            )
+            // Utilizando Gson / Moshi u otra librería de serialización (simplificado)
+            val finalJson = """{"v":"${envelope["v"]}", "p":"${envelope["p"]}", "d":"$payload", "ts":${envelope["ts"]}}"""
+            
+            if (isOpen) {
+                send(finalJson)
+                Timber.d("✓ Enviado: ${message.type} [${priority.name}]")
+            } else {
+                messageQueue.add(finalJson.toByteArray())
+                Timber.d("⏳ En cola: ${message.type}")
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Error enviando mensaje")
+        }
+    }
+    
+    private fun flushQueue() {
+        if (messageQueue.isEmpty() || !isOpen) return
+        Timber.i("🔄 Enviando ${messageQueue.size} mensajes en cola")
+        messageQueue.forEach { send(String(it)) }
+        messageQueue.clear()
+    }
+    
+    // MARK: - Criptografía (simplificada)
+    private fun encrypt(plaintext: String): String {
+        // Implementar AES-256-GCM con Tink/BouncyCastle
+        return plaintext // Placeholder
+    }
+    
+    private fun decrypt(ciphertext: String): String {
+        return ciphertext // Placeholder
+    }
+    
+    private fun serializeMessage(msg: TacticalMessage): String {
+        // Implementación simplificada (Reemplazar con kotlinx.serialization)
+        return """{"id":"${msg.id}", "type":"${msg.type}"}"""
+    }
+    
+    private fun parseMessage(json: String): TacticalMessage? {
+        // Implementación simplificada
+        return null
+    }
+    
+    private fun setupSSLSocketFactory() {
+        // Implementar certificate pinning para producción
+        val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+            override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        })
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, trustAllCerts, SecureRandom())
+        setSocketFactory(sslContext.socketFactory)
+    }
+
+    companion object {
+        private fun getDraftWithAuth(token: String) = org.java_websocket.drafts.Draft_6455()
+    }
+}

@@ -1,0 +1,227 @@
+FRONT YML
+version: "3.9"
+
+# ============================================================================
+# ARES OS / DREV - DOCKER COMPOSE UNIFICADO
+# Despliegue nativo para Proxmox VE / ARES OS
+# Red táctica: 192.168.88.0/24 | Gateway: 192.168.88.1 | DNS: 1.1.1.1
+# Incluye: DB, API REST+MCP, Relay WebSocket para DREV Frontend, Nginx UI
+# ============================================================================
+
+services:
+  # ──────────────────────────────────────────────────────────────────────────
+  # BASE DE DATOS TÁCTICA (PostgreSQL 15)
+  # ──────────────────────────────────────────────────────────────────────────
+  ares-db:
+    image: postgres:15-alpine
+    container_name: ares-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ares_artilleria
+      POSTGRES_USER: santa_barbara
+      POSTGRES_PASSWORD: "${DB_PASS:-S3cur3_B@ll1st1c_2026!}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - db_volume:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      ares_tactical_net:
+        ipv4_address: 192.168.88.10
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # CACHÉ & PUB/SUB PARA TELEMETRÍA (Redis 7)
+  # ──────────────────────────────────────────────────────────────────────────
+  ares-cache:
+    image: redis:7-alpine
+    container_name: ares-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_volume:/data
+    networks:
+      ares_tactical_net:
+        ipv4_address: 192.168.88.11
+    dns:
+      - 1.1.1.1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # MOTOR BALÍSTICO + API REST + MCP SERVER (FastAPI + Python 3.11)
+  # ──────────────────────────────────────────────────────────────────────────
+  ares-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ares-engine
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://santa_barbara:${DB_PASS:-S3cur3_B@ll1st1c_2026!}@192.168.88.10:5432/ares_artilleria
+      - REDIS_URL=redis://192.168.88.11:6379/0
+      - WS_RELAY_URL=ws://192.168.88.12:8765
+      - LATITUD_OPERATIVA=14.08
+      - TOLERANCIA_RANGO_M=1.0
+      - MCP_TRANSPORT=stdio
+      - TZ=America/Tegucigalpa
+    ports:
+      - "8000:8000"   # API REST / OpenAPI
+      - "8001:8001"   # MCP Server (stdio/sse)
+    depends_on:
+      - ares-db
+      - ares-cache
+      - drev-ws-relay
+    networks:
+      ares_tactical_net:
+        ipv4_address: 192.168.88.20
+    dns:
+      - 1.1.1.1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # MÓDULO WEBSOCKET PARA FRONTEND DREV (Broadcast + Telemetría en Tiempo Real)
+  # ──────────────────────────────────────────────────────────────────────────
+  drev-ws-relay:
+    image: python:3.11-slim
+    container_name: drev-websocket-module
+    restart: unless-stopped
+    working_dir: /app
+    # Instala dependencias y ejecuta el módulo WebSocket inline
+    command: >
+      sh -c "
+        pip install --no-cache-dir websockets aiohttp aioredis &&
+        python -c \"
+        import os, json, asyncio, websockets, aioredis
+        from aiohttp import web
+
+        REDIS_URL = os.getenv('REDIS_URL', 'redis://192.168.88.11:6379/0')
+        WS_PORT = int(os.getenv('WS_PORT', '8765'))
+        BACKEND_API = os.getenv('BACKEND_API', 'http://192.168.88.20:8000')
+
+        async def sync_telemetry():
+            redis = await aioredis.from_url(REDIS_URL)
+            pubsub = redis.pubsub()
+            await pubsub.subscribe('drev:telemetry', 'drev:missions')
+            async for msg in pubsub.listen():
+                if msg['type'] == 'message':
+                    payload = msg['data'].decode('utf-8')
+                    for ws in list(connected_clients):
+                        try: await ws.send(payload)
+                        except: connected_clients.discard(ws)
+
+        async def handle_client(websocket, path):
+            connected_clients.add(websocket)
+            try:
+                async for message in websocket:
+                    # Reenvía comandos del frontend al backend API
+                    resp = await web.ClientSession().post(f'{BACKEND_API}/v1/ws-forward', data=message)
+                    await websocket.send(await resp.text())
+            except websockets.exceptions.ConnectionClosed:
+                pass
+            finally:
+                connected_clients.discard(websocket)
+
+        connected_clients = set()
+        start_server = websockets.serve(handle_client, '0.0.0.0', WS_PORT)
+        print(f'[DREV-WS] Módulo WebSocket activo en puerto {WS_PORT}')
+        asyncio.gather(start_server, sync_telemetry())
+        asyncio.get_event_loop().run_forever()
+        \"
+      "
+    environment:
+      - REDIS_URL=redis://192.168.88.11:6379/0
+      - WS_PORT=8765
+      - BACKEND_API=http://192.168.88.20:8000
+      - TZ=America/Tegucigalpa
+    ports:
+      - "8765:8765"   # WebSocket endpoint para DREV Frontend
+    networks:
+      ares_tactical_net:
+        ipv4_address: 192.168.88.12
+    dns:
+      - 1.1.1.1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # FRONTEND DREV UI (Nginx + SPA React/Vite)
+  # ──────────────────────────────────────────────────────────────────────────
+  drev-frontend:
+    image: nginx:alpine
+    container_name: ares-drev-ui
+    restart: unless-stopped
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx-drev.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - ares-backend
+      - drev-ws-relay
+    networks:
+      ares_tactical_net:
+        ipv4_address: 192.168.88.30
+    dns:
+      - 1.1.1.1
+
+# ============================================================================
+# VOLÚMENES PERSISTENTES
+# ============================================================================
+volumes:
+  db_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/lib/ares-os/data/postgres
+      o: bind
+  redis_volume:
+    driver: local
+
+# ============================================================================
+# RED TÁCTICA PROXMOX / ARES OS
+# ============================================================================
+networks:
+  ares_tactical_net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.88.0/24
+          gateway: 192.168.88.1
+
+# ============================================================================
+# 📡 INTEGRACIÓN FRONTEND DREV (COPIAR EN TU CÓDIGO JS/TS)
+# ============================================================================
+/*
+// Conexión WebSocket al módulo drev-ws-relay (puerto 8765)
+const WS_URL = window.location.hostname === 'localhost' 
+  ? 'ws://localhost:8765' 
+  : 'ws://192.168.88.12:8765';
+
+let ws = new WebSocket(WS_URL);
+
+ws.onopen = () => console.log('[DREV] Telemetría WebSocket conectada');
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  // Actualiza UI en tiempo real
+  if (data.type === 'trajectory_update') update3DView(data.payload);
+  if (data.type === 'mission_status') renderMissionQueue(data.payload);
+  if (data.type === 'ammo_alert') triggerAmmoWarning(data.payload);
+};
+
+// Envío de comandos tácticos
+function sendTacticalCommand(cmd) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ action: cmd, timestamp: Date.now() }));
+  }
+}
+
+// Ejemplo: solicitar cálculo balístico en tiempo real
+sendTacticalCommand({ type: 'calculate_qe', proy: '155_HE_M107', carga: 'WB_M4A2', range: 12000 });
+*/
+# ============================================================================
+# 🚀 DESPLIEGUE EN PROXMOX / ARES OS
+# 1. Crear directorio: mkdir -p /opt/ares-os/{backend,frontend,init-scripts}
+# 2. Copiar este archivo como: /opt/ares-os/docker-compose.yml
+# 3. Ejecutar: cd /opt/ares-os && docker compose up -d --build
+# 4. Verificar red táctica: ip addr show | grep 192.168.88
+# 5. Acceder UI: http://192.168.88.30 | API: http://192.168.88.20:8000/docs
+# ============================================================================

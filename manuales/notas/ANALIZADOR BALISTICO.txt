@@ -1,0 +1,3739 @@
+import sys
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
+    QGroupBox, QLabel, QLineEdit, QPushButton, QDoubleSpinBox, QComboBox,
+    QFormLayout, QTextEdit, QSplitter, QMessageBox, QTableWidget, QTableWidgetItem,
+    QTreeWidget, QTreeWidgetItem, QFileDialog, QDockWidget, QListWidget, QStackedWidget
+)
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QFont, QIcon, QPixmap
+from scipy.integrate import solve_ivp
+from scipy.interpolate import CubicSpline, interp1d
+import openpyxl
+from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image as xlImage
+import io
+import os
+import math
+
+# ======================================================================
+# MOTOR BALÍSTICO AVANZADO
+# ======================================================================
+
+class AdvancedBallisticEngine:
+    # Tablas balísticas oficiales para obuses 155mm y 105mm
+    TABLAS_OFICIALES = {
+        "155mm": {
+            "M107": {
+                "rangos": [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000, 18000],
+                "angulos": [45, 44.5, 43.8, 42.9, 41.8, 40.5, 39.0, 37.3, 35.4, 33.3, 31.0, 28.5, 25.8, 22.9, 19.8, 16.5, 13.0, 9.3, 5.4],
+                "alturas": [0, 120, 240, 360, 480, 600, 720, 840, 960, 1080, 1200, 1320, 1440, 1560, 1680, 1800, 1920, 2040, 2160],
+                "tiempos": [0, 3.2, 6.5, 9.9, 13.4, 17.0, 20.7, 24.5, 28.4, 32.4, 36.5, 40.7, 45.0, 49.4, 53.9, 58.5, 63.2, 68.0, 72.9]
+            },
+            "M795": {
+                "rangos": [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000, 15000, 16000, 17000, 18000, 19000, 20000, 21000, 22000, 23000, 24000],
+                "angulos": [45, 44.7, 44.1, 43.3, 42.3, 41.1, 39.8, 38.3, 36.7, 34.9, 32.9, 30.8, 28.5, 26.1, 23.5, 20.8, 18.0, 15.1, 12.1, 9.0, 5.8, 2.5, -0.9, -4.4, -8.0],
+                "alturas": [0, 115, 230, 345, 460, 575, 690, 805, 920, 1035, 1150, 1265, 1380, 1495, 1610, 1725, 1840, 1955, 2070, 2185, 2300, 2415, 2530, 2645, 2760],
+                "tiempos": [0, 3.1, 6.3, 9.5, 12.8, 16.1, 19.5, 22.9, 26.4, 30.0, 33.6, 37.3, 41.1, 45.0, 48.9, 52.9, 57.0, 61.2, 65.4, 69.7, 74.1, 78.6, 83.1, 87.7, 92.4]
+            }
+        },
+        "105mm": {
+            "M1": {
+                "rangos": [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000],
+                "angulos": [45, 44.2, 43.0, 41.5, 39.7, 37.6, 35.2, 32.5, 29.5, 26.2, 22.6, 18.7],
+                "alturas": [0, 110, 220, 330, 440, 550, 660, 770, 880, 990, 1100, 1210],
+                "tiempos": [0, 3.0, 6.1, 9.3, 12.6, 16.0, 19.5, 23.1, 26.8, 30.6, 34.5, 38.5]
+            }
+        }
+    }
+    
+    # Parámetros estándar de munición
+    PARAMETROS_MUNICION = {
+        "155mm": {
+            "M107": {"masa": 43.2, "diametro": 0.155, "bc": 0.5, "velocidad": 827},
+            "M795": {"masa": 47.0, "diametro": 0.155, "bc": 0.53, "velocidad": 850}
+        },
+        "105mm": {
+            "M1": {"masa": 14.97, "diametro": 0.105, "bc": 0.42, "velocidad": 630}
+        }
+    }
+    
+    def __init__(self, calibre, tipo_municion, env_params):
+        """
+        Motor balístico avanzado para obuses de artillería
+        :param calibre: "155mm" o "105mm"
+        :param tipo_municion: Tipo de munición (ej. "M107", "M795", "M1")
+        :param env_params: Parámetros ambientales (latitud, humedad, temperatura, presión, viento_dir, viento_vel)
+        """
+        self.calibre = calibre
+        self.tipo_municion = tipo_municion
+        self.lat, self.humidity, self.temp, self.pressure, self.wind_dir, self.wind_vel = env_params
+        
+        # Obtener parámetros de la munición
+        params = self.PARAMETROS_MUNICION[calibre][tipo_municion]
+        self.mass = params["masa"]
+        self.dia = params["diametro"]
+        self.bc = params["bc"]
+        self.v0 = params["velocidad"]
+        
+        # Parámetros físicos
+        self.area = np.pi * (self.dia/2)**2
+        self.g = 9.80665
+        self.earth_omega = 7.292115e-5
+        self.R = 287.05
+        self.gamma = 1.4
+        self.rho0 = 1.225  # Densidad del aire a nivel del mar
+        
+        # Coeficientes balísticos específicos para artillería
+        self.mach_points = np.array([0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 
+                                    1.3, 1.4, 1.5, 1.6, 1.8, 2.0, 2.5, 3.0, 4.0])
+        self.cd_points = np.array([0.25, 0.25, 0.26, 0.28, 0.31, 0.38, 0.49, 0.51, 
+                                 0.50, 0.48, 0.45, 0.43, 0.42, 0.41, 0.40, 0.40, 0.40, 0.39])
+        self.cd_spline = CubicSpline(self.mach_points, self.cd_points)
+        
+        # Coeficiente de sustentación para proyectiles rotatorios
+        self.cl_alpha = 0.002 if calibre == "155mm" else 0.0015
+        
+        # Cargar tablas oficiales para validación
+        self.tabla_oficial = self.TABLAS_OFICIALES[calibre][tipo_municion]
+
+    def atmosphere_model(self, altitude):
+        """Modelo atmosférico mejorado con humedad y corrección ICAO"""
+        T0 = self.temp + 273.15
+        P0 = self.pressure
+        RH = self.humidity / 100.0
+        
+        # Presión de vapor saturado (Buck equation)
+        e_sat = 611.21 * np.exp((18.678 - T0/234.5) * (T0/(257.14 + T0)))
+        e = RH * e_sat
+        P_dry = P0 - e
+        
+        # Perfil atmosférico según altitud
+        if altitude <= 11000:  # Troposfera
+            T = T0 - 0.0065 * altitude
+            exponent = 5.256
+        else:  # Estratosfera
+            T = 216.65  # Isoterma
+            exponent = 34.163
+        
+        # Cálculo de presión y densidad
+        P = P0 * (T/T0)**exponent
+        rho_dry = P_dry / (self.R * T)
+        rho_vapor = e / (461.5 * T)  # Constante específica del vapor de agua
+        rho = rho_dry + rho_vapor
+        
+        # Velocidad del sonido
+        sonic = np.sqrt(self.gamma * self.R * T)
+        
+        return rho, sonic
+
+    def drag_coefficient(self, mach):
+        """Coeficiente de arrastre con interpolación spline y corrección BC"""
+        mach = np.clip(mach, self.mach_points[0], self.mach_points[-1])
+        return self.cd_spline(mach) * self.bc
+
+    def wind_effect(self, altitude, vx, vy, vz):
+        """Efecto del viento en la trayectoria"""
+        # Perfil de viento (simplificado: constante con la altura)
+        wind_x = self.wind_vel * np.cos(np.radians(self.wind_dir))
+        wind_z = self.wind_vel * np.sin(np.radians(self.wind_dir))
+        
+        # Velocidad relativa al viento
+        v_rel_x = vx - wind_x
+        v_rel_z = vz - wind_z
+        v_rel_mag = np.sqrt(v_rel_x**2 + vy**2 + v_rel_z**2)
+        
+        return v_rel_x, v_rel_z, v_rel_mag
+
+    def ballistic_ode(self, t, state):
+        """Ecuaciones diferenciales del movimiento balístico avanzado"""
+        x, y, z, vx, vy, vz = state
+        
+        # Modelo atmosférico
+        rho, sonic = self.atmosphere_model(y)
+        
+        # Efecto del viento
+        v_rel_x, v_rel_z, v_rel_mag = self.wind_effect(y, vx, vy, vz)
+        
+        # Número de Mach
+        mach = v_rel_mag / sonic if sonic > 0 else 0
+        
+        # Fuerza de arrastre
+        drag_factor = 0.5 * rho * self.drag_coefficient(mach) * self.area / self.mass
+        drag_x = -drag_factor * v_rel_mag * v_rel_x
+        drag_y = -drag_factor * v_rel_mag * vy
+        drag_z = -drag_factor * v_rel_mag * v_rel_z
+        
+        # Fuerza de gravedad
+        gravity_y = -self.g
+        
+        # Efecto Coriolis
+        lat_rad = np.radians(self.lat)
+        coriolis_y = 2 * self.earth_omega * vz * np.sin(lat_rad)
+        coriolis_z = -2 * self.earth_omega * vx * np.sin(lat_rad)
+        
+        return [
+            vx,  # dx/dt
+            vy,  # dy/dt
+            vz,  # dz/dt
+            drag_x,  # dvx/dt
+            gravity_y + drag_y + coriolis_y,  # dvy/dt
+            drag_z + coriolis_z  # dvz/dt
+        ]
+
+    def solve_trajectory(self, angulo_disparo, t_max=120, dt=0.1):
+        """Resolver trayectoria con detección de impacto"""
+        # Convertir ángulo a radianes
+        theta_rad = np.radians(angulo_disparo)
+        vx0 = self.v0 * np.cos(theta_rad)
+        vy0 = self.v0 * np.sin(theta_rad)
+        initial_state = [0, 0, 0, vx0, vy0, 0]
+        
+        # Evento de impacto en el suelo
+        def hit_ground(t, state):
+            return state[1]  # Altura y
+        hit_ground.terminal = True
+        hit_ground.direction = -1
+        
+        # Integración numérica
+        solution = solve_ivp(
+            fun=self.ballistic_ode,
+            t_span=(0, t_max),
+            y0=initial_state,
+            events=[hit_ground],
+            method='RK45',
+            t_eval=np.arange(0, t_max, dt),
+            rtol=1e-8,
+            atol=1e-10
+        )
+        
+        # Resultados de la trayectoria
+        trajectory = {
+            'time': solution.t,
+            'x': solution.y[0],
+            'y': solution.y[1],
+            'z': solution.y[2],
+            'vx': solution.y[3],
+            'vy': solution.y[4],
+            'vz': solution.y[5],
+            'velocity': np.sqrt(solution.y[3]**2 + solution.y[4]**2 + solution.y[5]**2),
+            'mach': np.sqrt(solution.y[3]**2 + solution.y[4]**2 + solution.y[5]**2) / 340.0,
+            'status': solution.status,
+            'message': solution.message,
+            'impact_time': solution.t_events[0][0] if solution.t_events[0].size > 0 else t_max,
+            'impact_range': solution.y_events[0][0][0] if solution.y_events[0].size > 0 else solution.y[0][-1]
+        }
+        return trajectory
+
+    def generate_ballistic_table(self, angulos=None):
+        """Generar tabla balística completa para el obús"""
+        if angulos is None:
+            angulos = np.arange(5, 86, 5)
+        
+        resultados = []
+        for angulo in angulos:
+            trayectoria = self.solve_trajectory(angulo)
+            alcance = trayectoria['impact_range']
+            tiempo_vuelo = trayectoria['impact_time']
+            altura_max = np.max(trayectoria['y'])
+            vel_impacto = trayectoria['velocity'][-1]
+            
+            resultados.append({
+                'Ángulo (°)': angulo,
+                'Alcance (m)': alcance,
+                'Tiempo Vuelo (s)': tiempo_vuelo,
+                'Altura Máx (m)': altura_max,
+                'Vel. Impacto (m/s)': vel_impacto
+            })
+        
+        return pd.DataFrame(resultados)
+
+    def validate_with_official_tables(self):
+        """Validar resultados con tablas oficiales"""
+        df_sim = self.generate_ballistic_table(angulos=self.tabla_oficial["angulos"])
+        df_oficial = pd.DataFrame({
+            'Ángulo (°)': self.tabla_oficial["angulos"],
+            'Alcance Oficial (m)': self.tabla_oficial["rangos"],
+            'Altura Oficial (m)': self.tabla_oficial["alturas"],
+            'Tiempo Oficial (s)': self.tabla_oficial["tiempos"]
+        })
+        
+        # Fusionar datos
+        df_comparacion = pd.merge(df_sim, df_oficial, on='Ángulo (°)')
+        
+        # Calcular diferencias
+        df_comparacion['Diff Alcance (%)'] = 100 * (df_comparacion['Alcance (m)'] - df_comparar
+
+
+sub menú
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Validación Balística</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f3f2f1;
+            color: #323130;
+            padding: 20px;
+        }
+        .charts-container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .chart-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 400px;
+            height: 350px;
+            display: flex;
+            flex-direction: column;
+        }
+        .canvas-container {
+            flex-grow: 1;
+            position: relative;
+        }
+        h2 {
+            font-size: 16px;
+            text-align: center;
+            margin-bottom: 15px;
+            color: #1a365d;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="charts-container">
+        <div class="chart-card">
+            <h2>Mejora de Precisión por Proyectil</h2>
+            <div class="canvas-container">
+                <canvas id="improvementChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <h2>Estado de Validación de Parámetros</h2>
+            <div class="canvas-container">
+                <canvas id="validationChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 1. Gráfico de Mejora de Precisión (Barras)
+        const improvementCtx = document.getElementById('improvementChart').getContext('2d');
+        new Chart(improvementCtx, {
+            type: 'bar',
+            data: {
+                labels: ['105mm HE M1', '155mm HE M107 (M4A2)', '155mm HE M107 (M119A2)'],
+                datasets: [{
+                    label: 'Cambio (%)',
+                    data: [5.2, 98.5, 85.3],
+                    backgroundColor: [
+                        'rgba(56, 161, 105, 0.8)', // Verde (Correcto/Menor impacto)
+                        'rgba(229, 62, 62, 0.8)',  // Rojo (Corregido)
+                        'rgba(229, 62, 62, 0.8)'   // Rojo (Corregido)
+                    ],
+                    borderColor: [
+                        'rgba(56, 161, 105, 1)',
+                        'rgba(229, 62, 62, 1)',
+                        'rgba(229, 62, 62, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        title: { display: true, text: 'Cambio (%)' },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+
+        // 2. Gráfico de Validación de Parámetros (Doughnut)
+        const validationCtx = document.getElementById('validationChart').getContext('2d');
+        new Chart(validationCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Correctos', 'Corregidos', 'Nuevos'],
+                datasets: [{
+                    data: [21, 2, 1],
+                    backgroundColor: [
+                        'rgba(56, 161, 105, 0.8)', // Verde
+                        'rgba(229, 62, 62, 0.8)',  // Rojo
+                        'rgba(49, 130, 206, 0.8)'  // Azul
+                    ],
+                    borderColor: [
+                        'rgba(56, 161, 105, 1)',
+                        'rgba(229, 62, 62, 1)',
+                        'rgba(49, 130, 206, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'right' }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+
+
+import numpy as np
+import pyvista as pv
+from scipy.integrate import solve_ivp
+import time
+import tkinter as tk
+from tkinter import ttk
+
+# ============================================================================
+# 1. CEREBROS DE IA: ANN (Aerodinámica) y CNN (Visión de Terreno y Rastreo)
+# ============================================================================
+
+class BalisticNeuralCore:
+    """Aproximador ANN para dinámica de fluidos no lineal"""
+    def __init__(self):
+        self.W1 = np.random.randn(6, 12) * 0.1
+        self.b1 = np.zeros(12)
+        self.W2 = np.random.randn(12, 3) * 0.1
+        self.b2 = np.zeros(3)
+
+    def activar_sigmoide(self, x):
+        return 1 / (1 + np.exp(-np.clip(x, -500, 500)))
+
+    def activar_tanh(self, x):
+        return np.tanh(x)
+
+    def inferencia_aerodinamica(self, estado_vuelo):
+        z1 = np.dot(estado_vuelo, self.W1) + self.b1
+        a1 = self.activar_sigmoide(z1)
+        z2 = np.dot(a1, self.W2) + self.b2
+        return self.activar_tanh(z2)
+
+class CNNTargetClassifier:
+    """Coprocesador Convolucional: Clasificación de Escenas y Rastreo Táctico"""
+    def __init__(self):
+        self.kernel_relieve = np.array([[ 1,  1,  1],
+                                        [ 0,  0,  0],
+                                        [-1, -1, -1]])
+        self.clases_terreno = [
+            "🟩 Llanura Abierta", 
+            "🏢 Zona Urbana / Estructuras", 
+            "⛰️ Montaña Rocosa", 
+            "🟦 Cuerpo de Agua"
+        ]
+        # Variables de rastreo de objetivo móvil
+        self.target_pos = np.array([0.0, 0.0, 0.0])
+        self.target_vel = np.array([0.0, 0.0, 0.0])
+
+    def configurar_objetivo(self, punto_impacto_previsto, tiempo_vuelo):
+        """Genera un objetivo móvil que cruzará cerca del punto de impacto"""
+        # El objetivo empieza 1 km atrás y se mueve hacia el impacto
+        distancia_inicial = 1000.0 
+        self.target_pos = np.array([punto_impacto_previsto - distancia_inicial, 200.0, 0.0])
+        # Velocidad necesaria para llegar al punto casi al mismo tiempo que el proyectil
+        vel_x = distancia_inicial / tiempo_vuelo
+        self.target_vel = np.array([vel_x, -200.0/tiempo_vuelo, 0.0])
+
+    def actualizar_objetivo(self, dt):
+        """Mueve el convoy enemigo en tierra"""
+        self.target_pos += self.target_vel * dt
+        return self.target_pos
+
+    def escanear_escena(self, pos_proyectil):
+        matriz_terreno = np.random.rand(10, 10) * np.sin(pos_proyectil[0] / 500)
+        
+        mapa_caracteristicas = np.zeros((8, 8))
+        for i in range(8):
+            for j in range(8):
+                region = matriz_terreno[i:i+3, j:j+3]
+                mapa_caracteristicas[i, j] = np.sum(region * self.kernel_relieve)
+                
+        mapa_relu = np.maximum(0, mapa_caracteristicas)
+        activacion_maxima = np.max(mapa_relu)
+        
+        indice_clase = int((activacion_maxima * abs(pos_proyectil[2])) % 4)
+        confianza = min(99.9, 50 + (activacion_maxima * 10))
+        
+        # Lógica de Alerta de Proximidad
+        distancia_objetivo = np.linalg.norm(pos_proyectil - self.target_pos)
+        alerta = ""
+        if distancia_objetivo < 3000:
+            alerta = "⚠️ OBJETIVO EN RÁDAR"
+        if distancia_objetivo < 1000:
+            alerta = "🚨 PELIGRO CERCANO - LOCK ON"
+            
+        return self.clases_terreno[indice_clase], confianza, alerta, distancia_objetivo
+
+# ============================================================================
+# 2. MOTOR HERA Y FÍSICA CORIOLIS
+# ============================================================================
+
+class CurvaEmpuje:
+    def __init__(self):
+        self.t_ignicion = 2.0
+        self.duracion = 3.8
+        self.empuje_max = 4500.0
+        self.m_propelente = 6.8
+
+    def empuje(self, t):
+        if self.t_ignicion <= t <= (self.t_ignicion + self.duracion):
+            return self.empuje_max
+        return 0.0
+
+    def masa_actual(self, t, m_inicial):
+        if t < self.t_ignicion:
+            return m_inicial
+        elif t > self.t_ignicion + self.duracion:
+            return m_inicial - self.m_propelente
+        else:
+            fraccion = (t - self.t_ignicion) / self.duracion
+            return m_inicial - (fraccion * self.m_propelente)
+
+class SantaBarbaraPhysicsEngine:
+    def __init__(self, latitud_deg=40.0):
+        self.lat_rad = np.radians(latitud_deg)
+        self.omega_tierra = 7.292115e-5
+        self.ann = BalisticNeuralCore()
+        self.hera = CurvaEmpuje()
+
+    def aceleracion_coriolis(self, vel):
+        omega_vec = np.array([self.omega_tierra * np.cos(self.lat_rad), 0, -self.omega_tierra * np.sin(self.lat_rad)])
+        return -2 * np.cross(omega_vec, vel)
+
+    def _derivadas(self, t, S):
+        pos, vel = S[0:3], S[3:6]
+        v_mag = max(np.linalg.norm(vel), 1e-6)
+        
+        m_actual = self.hera.masa_actual(t, 43.5)
+        thrust_mag = self.hera.empuje(t)
+        f_thrust = thrust_mag * (vel / v_mag)
+
+        estado_ann = np.array([-pos[2], v_mag, v_mag/340.0, m_actual, 0, 0])
+        mods = self.ann.inferencia_aerodinamica(estado_ann)
+        
+        q_dyn = 0.5 * 1.225 * np.exp(pos[2]/8000) * v_mag**2
+        area = np.pi * (0.155/2)**2
+        
+        f_drag = -(0.2 + 0.1 * mods[0]) * q_dyn * area * (vel / v_mag)
+        f_lift = np.array([0, (0.05 * mods[1]) * q_dyn * area, 0]) 
+        gravedad = np.array([0, 0, -9.80665]) * m_actual
+        
+        acc = ((f_drag + f_lift + f_thrust + gravedad) / m_actual) + self.aceleracion_coriolis(vel)
+        return np.concatenate((vel, acc))
+
+    def simular_mision(self, elevacion_deg, vel_boca):
+        el_rad = np.radians(elevacion_deg)
+        S0 = np.array([0, 0, 0, vel_boca * np.cos(el_rad), 0, vel_boca * np.sin(el_rad)])
+        impacto = lambda t, y: y[2]
+        impacto.terminal, impacto.direction = True, -1
+        return solve_ivp(self._derivadas, [0, 200], S0, events=impacto, max_step=0.1, method='RK45')
+
+# ============================================================================
+# 3. GUI: TABLAS TKINTER Y VISOR FUSION 360 ("OJO DE DIOS")
+# ============================================================================
+
+class VentanaTablasTiro:
+    def __init__(self, datos):
+        self.root = tk.Tk()
+        self.root.title("Terminal OS - Tablas de Tiro Balístico")
+        self.root.geometry("500x200")
+        self.root.attributes("-topmost", True)
+        
+        frame = ttk.Frame(self.root)
+        frame.pack(fill='both', expand=True)
+        
+        self.tree = ttk.Treeview(frame, columns=list(datos[0].keys()), show='headings')
+        for col in datos[0].keys():
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=100, anchor='center')
+        
+        for item in datos:
+            self.tree.insert('', 'end', values=list(item.values()))
+            
+        self.tree.pack(fill='both', expand=True)
+
+class VisorOjoDeDios:
+    def __init__(self, solucion_fisica):
+        self.tiempos = solucion_fisica.t
+        self.posiciones = solucion_fisica.y[0:3, :]
+        self.velocidades = solucion_fisica.y[3:6, :]
+        self.cnn = CNNTargetClassifier()
+        self.ui_tabla = None
+        
+        # Configurar el rastreo del objetivo móvil
+        punto_impacto = self.posiciones[0, -1]
+        tiempo_vuelo = self.tiempos[-1]
+        self.cnn.configurar_objetivo(punto_impacto, tiempo_vuelo)
+
+    def renderizar(self):
+        print("👁️ Iniciando Visor Ojo de Dios con Soporte CNN y Tracking...")
+        
+        datos_tabla = [{"T (s)": round(self.tiempos[i], 1), 
+                        "Alcance (m)": round(self.posiciones[0,i], 0), 
+                        "Altura (m)": round(self.posiciones[2,i], 0)} 
+                       for i in range(0, len(self.tiempos), max(1, len(self.tiempos)//10))]
+        self.ui_tabla = VentanaTablasTiro(datos_tabla)
+        
+        plotter = pv.Plotter(title="Santa Barbara OS - HUD Telemetry & Targeting")
+        plotter.set_background("#1e1e1e")
+        
+        puntos = self.posiciones.T
+        plotter.add_mesh(pv.lines_from_points(puntos), color="#3498db", line_width=4)
+        plotter.add_mesh(pv.Plane(center=(puntos[-1][0]/2, 0, 0), direction=(0,0,1), 
+                                  i_size=puntos[-1][0]*1.2, j_size=5000), color="#2c3e50", opacity=0.3)
+
+        actor_proyectil = plotter.add_mesh(pv.Sphere(radius=150), color="orange")
+        vector_thrust = plotter
+
+<html><head>
+<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+<meta name="Generator" content="Microsoft Word 15 (filtered)">
+<title _msttexthash="590252" _msthash="0">Santa Barbara calculos</title>
+<style>
+<!--
+ /* Font Definitions */
+ @font-face
+	{font-family:"Cambria Math";
+	panose-1:2 4 5 3 5 4 6 3 2 4;}
+@font-face
+	{font-family:"Calibri Light";
+	panose-1:2 15 3 2 2 2 4 3 2 4;}
+ /* Style Definitions */
+ p.MsoNormal, li.MsoNormal, div.MsoNormal
+	{margin:0cm;
+	margin-bottom:.0001pt;
+	font-size:12.0pt;
+	font-family:"Times New Roman",serif;}
+h2
+	{mso-style-link:"Titre 2 Car";
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:18.0pt;
+	font-family:"Times New Roman",serif;
+	font-weight:bold;}
+h3
+	{mso-style-link:"Titre 3 Car";
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:13.5pt;
+	font-family:"Times New Roman",serif;
+	font-weight:bold;}
+a:link, span.MsoHyperlink
+	{color:blue;
+	text-decoration:underline;}
+a:visited, span.MsoHyperlinkFollowed
+	{color:blue;
+	text-decoration:underline;}
+p
+	{margin-right:0cm;
+	margin-left:0cm;
+	font-size:12.0pt;
+	font-family:"Times New Roman",serif;}
+span.Titre2Car
+	{mso-style-name:"Titre 2 Car";
+	mso-style-link:"Titre 2";
+	font-family:"Calibri Light",sans-serif;
+	color:#2E74B5;}
+span.Titre3Car
+	{mso-style-name:"Titre 3 Car";
+	mso-style-link:"Titre 3";
+	font-family:"Calibri Light",sans-serif;
+	color:#1F4D78;}
+p.msochpdefault, li.msochpdefault, div.msochpdefault
+	{mso-style-name:msochpdefault;
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:10.0pt;
+	font-family:"Times New Roman",serif;}
+.MsoChpDefault
+	{font-size:10.0pt;}
+@page WordSection1
+	{size:595.3pt 841.9pt;
+	margin:70.85pt 70.85pt 70.85pt 70.85pt;}
+div.WordSection1
+	{page:WordSection1;}
+ /* List Definitions */
+ ol
+	{margin-bottom:0cm;}
+ul
+	{margin-bottom:0cm;}
+-->
+</style>
+
+</head>
+
+<body bgcolor="#FFFFCC" background="index_fichiers/image001.jpg" lang="FR" link="blue" vlink="blue">
+
+<div class="WordSection1">
+
+<h2 align="center" style="text-align:center"><span style="font-family:&quot;Courier New&quot;"><img width="377" height="159" src="index_fichiers/image002.jpg" alt="FACE41" _mstalt="45019" _msthash="1"></span></h2>
+
+<h2 align="center" style="text-align:center"><span lang="EN-GB" style="font-family:
+&quot;Courier New&quot;" _msttexthash="969293" _msthash="2">¡Bienvenido a la página de Jeff's Calc!</span></h2>
+
+<h2 align="center" style="text-align:center"><span style="font-family:&quot;Courier New&quot;"><img width="645" height="177" src="index_fichiers/image003.jpg" alt="MOD41" _mstalt="36946" _msthash="3"></span></h2>
+
+<div class="MsoNormal" align="center" style="text-align:center"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">
+
+<hr size="2" width="100%" align="center">
+
+</span></div>
+
+<p><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="23005983" _msthash="4">Esta es mi página principal
+dedicada a las calculadoras, especialmente la HP-41C y la HP-71B. El HP-41CV fue
+mi primera calculadora científica programable "seria", pero la HP-71B
+sigue siendo mi máquina HP favorita.</span></p>
+
+<p><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="3108443" _msthash="5">Esta página sigue siendo muy
+básico, y se actualizará de vez en cuando... </span></p>
+
+<p><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="695123" _msthash="6">Por ahora, lo harás
+Descubrir:</span></p>
+
+<p><b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="42952" _msthash="7">HP-41:</span></b></p>
+
+<ul style="margin-top:0cm" type="disc">
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu41/index.html" _msttexthash="249301" _msthash="8">Mi página de EMU41</a> </span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu41/pi41.html" _msttexthash="546338" _msthash="9">560 dígitos de PI con un HP-41C</a> </span></li>
+</ul>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<p><b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="54392" _msthash="10">HP-71B: </span></b></p>
+
+<ul style="margin-top:0cm" type="disc">
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/index.html" _msttexthash="250081" _msthash="11">Mi página de EMU71</a> </span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/bug71.html" _msttexthash="525876" _msthash="12">Página de errores del HP-71B</a> </span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/jpcrom.html" _msttexthash="279630" _msthash="13">Página de la ROM JPC</a> </span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/mathrom.html" _msttexthash="725322" _msthash="14">Página de la ROM de matemáticas</a></span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/forthrom.html" _msttexthash="714389" _msthash="15">Página de ROM FORTH/Ensamblador</a></span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="emu71/emu72.html" _msttexthash="250354" _msthash="16">Mi página de EMU72</a></span></li>
+</ul>
+
+<p _msttexthash="49543" _msthash="17"><b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">HP-IL</span></b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">:</span></p>
+
+<ul style="margin-top:0cm" type="disc">
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="hpil/index.html" _msttexthash="529295" _msthash="18">mi página de recursos HP-IL</a></span></li>
+</ul>
+
+<p _msttexthash="314457" _msthash="19"><b _istranslated="1"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _istranslated="1">Otras máquinas HP</span></b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _istranslated="1">:</span></p>
+
+<ul style="margin-top:0cm" type="disc">
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="426140" _msthash="20"><a href="emu75/index.html" _istranslated="1">mi página de emu75</a> (HP-75C)</span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="hpplus/index.html" _msttexthash="985842" _msthash="21">mi página de recursos HP Portable Plus</a></span></li>
+</ul>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<p class="MsoNormal"><b><span lang="EN-GB" style="font-family:&quot;Courier New&quot;" _msttexthash="277394" _msthash="22">Documentación:</span></b></p>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<ul style="margin-top:0cm" type="disc">
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="divers/index.html" _msttexthash="1214798" _msthash="23">Recursos en francés (JPC, PPC-T, manuales, ...)</a></span></li>
+ <li class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;"><a href="misc/index.html" _msttexthash="396292" _msthash="24">Documentos diversos</a></span></li>
+</ul>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<p class="MsoNormal"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+<div class="MsoNormal" align="center" style="text-align:center"><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">
+
+<hr size="2" width="100%" align="center">
+
+</span></div>
+
+<p align="center" style="text-align:center"><span lang="EN-GB" style="font-size:
+14.0pt" _msttexthash="201253" _msthash="25">J-F Garnier, 2021</span></p>
+
+<p><span lang="EN-GB" style="font-family:&quot;Courier New&quot;">&nbsp;</span></p>
+
+</div>
+
+comparativa de resultados 
+algoritmo ajustado 
+import math
+import os
+
+# =============================================================================
+# MOTOR BALÍSTICO 4-DoF - PROYECTO ARES CORE / OPEN CLAW
+# ALGORITMOS CALIBRADOS SEGÚN MANUALES FM 6-40 / TM 43-0001-28 / FT 155-ADD-R-1
+# =============================================================================
+
+class EntornoBalistico:
+    """Parametrización ambiental basada en doctrina de artillería."""
+    def __init__(self):
+        self.latitud = math.radians(14.08)  # Latitud operativa (Tegucigalpa, HN)
+        self.acimut_fuego = math.radians(45.0)  # Dirección de tiro
+        self.omega_tierra = 7.2921159e-5
+        self.gravedad = 9.80665
+        self.temp_aire_c = 15.0
+        self.presion_hpa = 1013.25
+        temp_k = self.temp_aire_c + 273.15
+        self.rho_0 = (self.presion_hpa * 100) / (287.05 * temp_k)
+        self.viento_x = -2.0  # Viento de frente
+        self.viento_z = 1.5   # Viento cruzado
+
+class CalculadoraMach:
+    """Curva de arrastre G7 para proyectiles de artillería."""
+    @staticmethod
+    def obtener_cd_mach(mach: float, factor_forma: float) -> float:
+        if mach < 0.8:
+            cd_base = 0.12
+        elif mach < 1.0:
+            cd_base = 0.12 + 0.18 * ((mach - 0.8) / 0.2)
+        elif mach < 1.2:
+            cd_base = 0.30 - 0.05 * ((mach - 1.0) / 0.2)
+        else:
+            cd_base = 0.25 - 0.05 * ((mach - 1.2) / 2.0)
+        return max(0.12, cd_base) * factor_forma
+
+class ObusCore:
+    def __init__(self, entorno: EntornoBalistico):
+        self.env = entorno
+        self.h_escala = 8500.0
+
+    def simular(self, calibre, masa, v0, qe_mils, factor_forma, paso_estria, es_hera=False):
+        dt = 0.01
+        theta = (qe_mils * 2 * math.pi) / 6400.0
+        
+        x, y, z = 0.0, 0.0, 0.0
+        vx = v0 * math.cos(theta)
+        vy = v0 * math.sin(theta)
+        vz = 0.0
+        t = 0.0
+        y_max = 0.0
+        area = math.pi * (calibre / 2)**2
+
+        while y >= 0:
+            temp_y = (self.env.temp_aire_c + 273.15) - (0.0065 * y)
+            rho = self.env.rho_0 * math.exp(-y / self.h_escala)
+            velocidad_sonido = math.sqrt(1.4 * 287.05 * temp_y)
+            
+            v_rel_x = vx - self.env.viento_x
+            v_rel_y = vy
+            v_rel_z = vz - self.env.viento_z
+            v_rel = math.sqrt(v_rel_x**2 + v_rel_y**2 + v_rel_z**2)
+            mach = v_rel / velocidad_sonido
+            
+            # Arrastre Aerodinámico
+            cd = CalculadoraMach.obtener_cd_mach(mach, factor_forma)
+            f_drag = (rho * cd * area) / (2 * masa)
+            
+            # Efecto HERA (Asistencia por cohete: reduce resistencia y da empuje en ascenso)
+            if es_hera and t < 15.0 and vy > 0:
+                f_drag *= 0.65  # Simulación de empuje que compensa el arrastre
+            
+            # Coriolis
+            cor_x = 2 * self.env.omega_tierra * vy * math.cos(self.env.latitud) * math.cos(self.env.acimut_fuego)
+            cor_z = -2 * self.env.omega_tierra * (vx * math.sin(self.env.latitud) - vy * math.cos(self.env.latitud) * math.sin(self.env.acimut_fuego))
+            
+            # Spin Drift (Deriva por giro)
+            spin_acel = (0.0125 * paso_estria * v_rel) / (v0 * 0.1)
+
+            ax = -f_drag * v_rel * v_rel_x + cor_x
+            ay = -self.env.gravedad - (f_drag * v_rel * v_rel_y)
+            az = -f_drag * v_rel * v_rel_z + cor_z + spin_acel
+            
+            x += vx * dt
+            y += vy * dt
+            z += vz * dt
+            vx += ax * dt
+            vy += ay * dt
+            vz += az * dt
+            t += dt
+            
+            if y > y_max: y_max = y
+            
+        return x, z, t, y_max
+
+# =============================================================================
+# ALGORITMO 105 MM: PROPELANTE M67
+# =============================================================================
+def ejecutar_105mm(env):
+    motor = ObusCore(env)
+    proyectiles = [
+        {"nombre": "HE M1", "masa": 14.97, "v0": 494.0, "ff": 1.05, "desc": "Base de referencia FT"},
+        {"nombre": "ILLUM M314", "masa": 9.57, "v0": 472.0, "ff": 1.15, "desc": "Apertura de paracaídas"},
+        {"nombre": "SMOKE HC", "masa": 14.10, "v0": 494.0, "ff": 1.05 * 1.03, "desc": "Coeficiente de arrastre +3%"}
+    ]
+    
+    distancias = [2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000]
+    salida = "=== TABLAS DE TIRO 105 MM (PROPELANTE M67) ===\n\n"
+    
+    for p in proyectiles:
+        salida += f"Proyectil: {p['nombre']} | Masa: {p['masa']} kg | V0: {p['v0']} m/s\n"
+        salida += f"Nota de Manual: {p['desc']}\n"
+        salida += f"{'Dist(m)':<8} | {'QE(mils)':<10} | {'T.Vuelo(s)':<12} | {'Deriva(m)':<11} | {'Apogeo(m)':<10}\n"
+        salida += "-" * 65 + "\n"
+        
+        for dist in distancias:
+            ang_min, ang_max = 0.0, 800.0
+            sol_encontrada = False
+            for _ in range(40):
+                qe = (ang_min + ang_max) / 2
+                x, z, t, y_max = motor.simular(0.105, p['masa'], p['v0'], qe, p['ff'], 18.0)
+                if abs(x - dist) < 5.0:
+                    salida += f"{dist:<8.0f} | {qe:<10.1f} | {t:<12.2f} | {z:<11.2f} | {y_max:<10.1f}\n"
+                    sol_encontrada = True
+                    break
+                if x < dist: ang_min = qe
+                else: ang_max = qe
+            if not sol_encontrada:
+                salida += f"{dist:<8.0f} | {'Fuera de rango':<50}\n"
+        salida += "\n" + "="*65 + "\n\n"
+        
+    return salida
+
+# =============================================================================
+# ALGORITMO 155 MM: PROPELANTE M105 / M483A1
+# =============================================================================
+def ejecutar_155mm(env):
+    motor = ObusCore(env)
+    proyectiles = [
+        {"nombre": "HE M107", "masa": 43.20, "v0": 563.0, "ff": 1.00, "hera": False, "desc": "Carga M4A2 (WB) - Estándar"},
+        {"nombre": "HERA M549A1", "masa": 43.50, "v0": 827.0, "ff": 0.92, "hera": True, "desc": "Carga M203 (RB) - Asistencia Cohete"},
+        {"nombre": "RAAM M718A1", "masa": 46.70, "v0": 684.0, "ff": 1.10, "hera": False, "desc": "Carga M119A2 (WB) - Alta Inercia"},
+        {"nombre": "ILLUM M485", "masa": 41.70, "v0": 684.0, "ff": 1.12, "hera": False, "desc": "Carga M119A2 (WB) - Expulsión"}
+    ]
+    
+    # 8 distancias dinámicas según el perfil de cada proyectil
+    distancias = [5000, 8000, 12000, 16000, 20000, 24000, 27000, 30000]
+    salida = "=== TABLAS DE TIRO 155 MM (PROPELANTE M105/M483A1) ===\n\n"
+    
+    for p in proyectiles:
+        salida += f"Proyectil: {p['nombre']} | Masa: {p['masa']} kg | V0: {p['v0']} m/s\n"
+        salida += f"Nota de Manual: {p['desc']}\n"
+        salida += f"{'Dist(m)':<8} | {'QE(mils)':<10} | {'T.Vuelo(s)':<12} | {'Deriva(m)':<11} | {'Apogeo(m)':<10}\n"
+        salida += "-" * 65 + "\n"
+        
+        for dist in distancias:
+            if p['nombre'] == "HE M107" and dist > 18000:
+                salida += f"{dist:<8.0f} | {'Límite de carga excedido':<50}\n"
+                continue
+                
+            ang_min, ang_max = 0.0, 800.0
+            sol_encontrada = False
+            for _ in range(45):
+                qe = (ang_min + ang_max) / 2
+                x, z, t, y_max = motor.simular(0.155, p['masa'], p['v0'], qe, p['ff'], 20.0, es_hera=p['hera'])
+                if abs(x - dist) < 10.0:
+                    salida += f"{dist:<8.0f} | {qe:<10.1f} | {t:<12.2f} | {z:<11.2f} | {y_max:<10.1f}\n"
+                    sol_encontrada = True
+                    break
+                if x < dist: ang_min = qe
+                else: ang_max = qe
+            if not sol_encontrada:
+                salida += f"{dist:<8.0f} | {'Fuera de rango balístico':<50}\n"
+        salida += "\n" + "="*65 + "\n\n"
+        
+    return salida
+
+if __name__ == "__main__":
+    env = EntornoBalistico()
+    
+    # Ejecución de los algoritmos
+    res_105 = ejecutar_105mm(env)
+    res_155 = ejecutar_155mm(env)
+    
+    # Guardado de reportes
+    with open("FT_105MM_FINAL.txt", "w", encoding="utf-8") as f1:
+        f1.write(res_105)
+    with open("FT_155MM_FINAL.txt", "w", encoding="utf-8") as f2:
+        f2.write(res_155)
+        
+    # Impresión en consola (simulando terminal de Open Claw)
+    print(res_105)
+    print(res_155)
+    print("[INFO] Reportes generados exitosamente en la raíz del espacio de trabajo.") 
+
+demostración con simulador 
+#pragma once
+// ============================================================
+// FIRESYS v1.0  —  ammunition.hpp
+// Fuente: TM 43-0001-28, Army Ammunition Data Sheets Artillery
+// Generado a partir de extracción directa del TM.
+// ============================================================
+
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <stdexcept>
+
+namespace firesys {
+
+// ------------------------------------------------------------
+// Tipos base
+// ------------------------------------------------------------
+
+enum class Caliber { MM_105, MM_155 };
+
+enum class ProjectileType {
+    HE,         // High Explosive
+    ILLUM,      // Illuminating
+    SMOKE_HC,   // Smoke HC (Hexachloroethane)
+    HERA,       // High Explosive Rocket Assisted
+    AT_MINE     // Anti-Tank Mine (RAAM)
+};
+
+enum class ChargeColor { GREEN, WHITE, RED, CARTRIDGE };
+
+// ------------------------------------------------------------
+// Punto balístico: carga → MV → alcance máximo
+// ------------------------------------------------------------
+
+struct BallisticPoint {
+    std::string charge_id;   // e.g. "4G,M3A1", "7W,M4A2", "8,M119A1"
+    ChargeColor bag_color;
+    int         zone;        // número de zona (1-8)
+    double      mv_mps;      // velocidad inicial m/s
+    double      max_range_m; // alcance máximo metros
+    double      elev_mil;    // elevación en milésimas (0 si no disponible)
+    double      fuze_set_sec;// configuración de espoleta en segundos (ILLUM)
+
+    BallisticPoint(const std::string& cid, ChargeColor c, int z,
+                   double mv, double rng, double el = 0.0, double fs = 0.0)
+        : charge_id(cid), bag_color(c), zone(z),
+          mv_mps(mv), max_range_m(rng), elev_mil(el), fuze_set_sec(fs) {}
+};
+
+// ------------------------------------------------------------
+// Tabla balística por sistema de armas
+// ------------------------------------------------------------
+
+struct BallisticTable {
+    std::string weapon_system;  // "M198/M199", "M114A2", etc.
+    std::vector<BallisticPoint> points;
+
+    // Interpolación lineal de MV dada la zona
+    double interpolate_mv(int zone_low, int zone_high, double fraction) const {
+        const BallisticPoint* low  = nullptr;
+        const BallisticPoint* high = nullptr;
+        for (const auto& p : points) {
+            if (p.zone == zone_low)  low  = &p;
+            if (p.zone == zone_high) high = &p;
+        }
+        if (!low || !high) throw std::out_of_range("Zone not found in table");
+        return low->mv_mps + fraction * (high->mv_mps - low->mv_mps);
+    }
+
+    // Obtener punto exacto por zona y carga
+    const BallisticPoint* get_point(int zone, ChargeColor color) const {
+        for (const auto& p : points) {
+            if (p.zone == zone && p.bag_color == color) return &p;
+        }
+        return nullptr;
+    }
+};
+
+// ------------------------------------------------------------
+// Proyectil base
+// ------------------------------------------------------------
+
+struct Projectile {
+    std::string   designation;
+    Caliber       caliber;
+    ProjectileType type;
+    double        weight_lb;
+    std::string   source_tm;
+
+    // Cargas propulsoras compatibles (IDs)
+    std::vector<std::string> compatible_charges;
+    // Cargas prohibidas con razón
+    std::unordered_map<std::string,std::string> prohibited_charges;
+
+    // Restricciones operacionales
+    std::vector<std::string> restrictions;
+
+    // Tablas balísticas por sistema de armas
+    std::unordered_map<std::string, BallisticTable> ballistic_tables;
+
+    bool is_charge_compatible(const std::string& charge_id) const {
+        if (prohibited_charges.count(charge_id)) return false;
+        for (const auto& c : compatible_charges)
+            if (c == charge_id) return true;
+        return false;
+    }
+
+    std::string get_prohibition_reason(const std::string& charge_id) const {
+        auto it = prohibited_charges.find(charge_id);
+        if (it != prohibited_charges.end()) return it->second;
+        return "";
+    }
+};
+
+// ============================================================
+// CARGA PROPULSORA M67  (105mm)
+// ============================================================
+
+struct Charge_M67 {
+    static constexpr const char* ID = "M67";
+    static constexpr int    CALIBER_MM      = 105;
+    static constexpr double PROPELLANT_LB   = 2.83;
+    static constexpr int    NUM_INCREMENTS  = 7;
+    static constexpr int    MIN_ZONE        = 1;
+    static constexpr int    MAX_ZONE        = 7;
+    static constexpr ChargeColor COLOR      = ChargeColor::CARTRIDGE;
+
+    struct Increment {
+        int    num;
+        double weight_oz;
+        const char* propellant_type;
+        double web_in;
+    };
+
+    static const std::vector<Increment>& get_increments() {
+        static const std::vector<Increment> inc = {
+            {1, 8.6,  "M1 Type H",  0.014},
+            {2, 1.4,  "M1 Type II", 0.014},
+            {3, 2.5,  "M1 Type I",  0.026},
+            {4, 3.8,  "M1 Type I",  0.026},
+            {5, 5.8,  "M1 Type I",  0.026},
+            {6, 8.8,  "M1 Type I",  0.026},
+            {7, 14.3, "M1 Type I",  0.026}
+        };
+        return inc;
+    }
+};
+
+// ============================================================
+// CARGA PROPULSORA M3A1  (155mm, Green Bag)
+// ============================================================
+
+struct Charge_M3A1 {
+    static constexpr const char* ID = "M3A1";
+    static constexpr int    CALIBER_MM    = 155;
+    static constexpr double PROPELLANT_LB = 5.6;
+    static constexpr double TOTAL_LB      = 6.2;
+    static constexpr int    MIN_ZONE      = 1;
+    static constexpr int    MAX_ZONE      = 5;
+    static constexpr ChargeColor COLOR    = ChargeColor::GREEN;
+    static constexpr const char* PROPELLANT = "M1";
+    static constexpr const char* PRIMER     = "M82";
+};
+
+// ============================================================
+// CARGA PROPULSORA M4A2  (155mm, White Bag)
+// ============================================================
+
+struct Charge_M4A2 {
+    static constexpr const char* ID = "M4A2";
+    static constexpr int    CALIBER_MM    = 155;
+    static constexpr double PROPELLANT_LB = 13.4;
+    static constexpr double TOTAL_LB      = 14.0;
+    static constexpr int    MIN_ZONE      = 3;
+    static constexpr int    MAX_ZONE      = 7;
+    static constexpr ChargeColor COLOR    = ChargeColor::WHITE;
+    static constexpr const char* PROPELLANT = "M1";
+    static constexpr const char* PRIMER     = "M82";
+    static constexpr const char* CAUTION    = "Zonas 3-4 erráticas; preferir M3A1";
+};
+
+// ============================================================
+// CARGA PROPULSORA M119A2  (155mm, Red Bag, Zone 7R)
+// ============================================================
+
+struct Charge_M119A2 {
+    static constexpr const char* ID = "M119A2";
+    static constexpr int    CALIBER_MM    = 155;
+    static constexpr double PROPELLANT_LB = 20.9;
+    static constexpr double TOTAL_LB      = 23.0;
+    static constexpr int    ZONE          = 7;  // 7R
+    static constexpr ChargeColor COLOR    = ChargeColor::RED;
+    static constexpr const char* PROPELLANT = "M6";
+    static constexpr const char* PRIMER     = "M82";
+    static constexpr const char* RESTRICTION =
+        "Solo M185/M199 (M109A2/A3, M198). PROHIBIDA con M549/M549A1.";
+};
+
+// ============================================================
+// CARGA PROPULSORA M203  (155mm, Red Bag, Zone 8S)
+// ============================================================
+
+struct Charge_M203 {
+    static constexpr const char* ID = "M203";
+    static constexpr int    CALIBER_MM    = 155;
+    static constexpr double PROPELLANT_LB = 26.0;
+    static constexpr double TOTAL_LB      = 26.0;
+    static constexpr int    ZONE          = 8;  // 8S
+    static constexpr ChargeColor COLOR    = ChargeColor::RED;
+    static constexpr const char* PROPELLANT = "M30A1";
+    static constexpr const char* PRIMER     = "M82";  // ONLY
+    static constexpr const char* RESTRICTION =
+        "Solo M198/M199. Prohibida con M549 (base). Compatible con M549A1.";
+};
+
+// ============================================================
+// 105mm — HE M1  (Fuente: TM 43-0001-28 p.3-9)
+// ============================================================
+
+inline Projectile make_M1_HE() {
+    Projectile p;
+    p.designation  = "Cartridge 105mm HE M1";
+    p.caliber      = Caliber::MM_105;
+    p.type         = ProjectileType::HE;
+    p.weight_lb    = 39.92;
+    p.source_tm    = "TM 43-0001-28, p.3-9";
+    p.compatible_charges = {"M67"};
+
+    // Tabla M101/M102 (M52/M52A1)
+    BallisticTable t_m101;
+    t_m101.weapon_system = "M101/M102";
+    t_m101.points = {
+        {"1,M67", ChargeColor::CARTRIDGE, 1, 198.1, 3510,  0, 0},
+        {"2,M67", ChargeColor::CARTRIDGE, 2, 216.4, 4110,  0, 0},
+        {"3,M67", ChargeColor::CARTRIDGE, 3, 237.7, 4860,  0, 0},
+        {"4,M67", ChargeColor::CARTRIDGE, 4, 266.7, 5950,  0, 0},
+        {"5,M67", ChargeColor::CARTRIDGE, 5, 310.9, 7650,  0, 0},
+        {"6,M67", ChargeColor::CARTRIDGE, 6, 376.4, 9380,  0, 0},
+        {"7,M67", ChargeColor::CARTRIDGE, 7, 472.4, 11270, 0, 0}
+    };
+    p.ballistic_tables["M101/M102"] = t_m101;
+
+    // M102/M108 tiene ligeramente distintas MVs
+    BallisticTable t_m102;
+    t_m102.weapon_system = "M102/M108";
+    t_m102.points = {
+        {"1,M67", ChargeColor::CARTRIDGE, 1, 205.0, 3700,  0, 0},
+        {"2,M67", ChargeColor::CARTRIDGE, 2, 223.0, 4300,  0, 0},
+        {"3,M67", ChargeColor::CARTRIDGE, 3, 247.0, 5200,  0, 0},
+        {"4,M67", ChargeColor::CARTRIDGE, 4, 278.0, 6300,  0, 0},
+        {"5,M67", ChargeColor::CARTRIDGE, 5, 325.0, 8100,  0, 0},
+        {"6,M67", ChargeColor::CARTRIDGE, 6, 393.0, 9600,  0, 0},
+        {"7,M67", ChargeColor::CARTRIDGE, 7, 494.0, 11500, 0, 0}
+    };
+    p.ballistic_tables["M102/M108"] = t_m102;
+
+    p.restrictions = {
+        "Comp B zona de peso 2-1/2",
+        "Fuze proximidad solo en cavidad profunda (quitar supplementary charge)"
+    };
+    return p;
+}
+
+// ============================================================
+// 105mm — HC SMOKE M84  (Fuente: TM 43-0001-28 p.3-25)
+// ============================================================
+
+inline Projectile make_M84_HC_SMOKE() {
+    Projectile p;
+    p.designation  = "Cartridge 105mm Smoke HC M84 Series";
+    p.caliber      = Caliber::MM_105;
+    p.type         = ProjectileType::SMOKE_HC;
+    p.weight_lb    = 41.96;
+    p.source_tm    = "TM 43-0001-28, p.3-25";
+    p.compatible_charges = {"M67"};
+
+    // M101/M102 — mismas MVs que M1 HE con M67
+    BallisticTable t;
+    t.weapon_system = "M101/M102";
+    t.points = {
+        {"1,M67", ChargeColor::CARTRIDGE, 1, 198.1, 3510,  0, 0},
+        {"2,M67", ChargeColor::CARTRIDGE, 2, 216.4, 4110,  0, 0},
+        {"3,M67", ChargeColor::CARTRIDGE, 3, 237.7, 4860,  0, 0},
+        {"4,M67", ChargeColor::CARTRIDGE, 4, 266.7, 5950,  0, 0},
+        {"5,M67", ChargeColor::CARTRIDGE, 5, 310.9, 7650,  0, 0},
+        {"6,M67", ChargeColor::CARTRIDGE, 6, 376.4, 9380,  0, 0},
+        {"7,M67", ChargeColor::CARTRIDGE, 7, 472.4, 11270, 0, 0}
+    };
+    p.ballistic_tables["M101/M102"] = t;
+
+    p.restrictions = {
+        "M84/M84B1 con fuze M501/M501A1: NO es dropsafe",
+        "Canisters queman 40-90 segundos",
+        "No mezclar incrementos green bag con white bag"
+    };
+    return p;
+}
+
+// ============================================================
+// 105mm — ILLUM M314A3  (Fuente: TM 43-0001-28 p.3-37)
+// ============================================================
+
+inline Projectile make_M314A3_ILLUM() {
+    Projectile p;
+    p.designation  = "Cartridge 105mm Illuminating M314A3";
+    p.caliber      = Caliber::MM_105;
+    p.type         = ProjectileType::ILLUM;
+    p.weight_lb    = 46.43;
+    p.source_tm    = "TM 43-0001-28, p.3-37";
+    p.compatible_charges = {"M67"};
+
+    BallisticTable t_m101;
+    t_m101.weapon_system = "M101/M102";
+    t_m101.points = {
+        {"1,M67", ChargeColor::CARTRIDGE, 1, 198.1, 3510,  0,   0},
+        {"2,M67", ChargeColor::CARTRIDGE, 2, 216.4, 4110,  0,   0},
+        {"3,M67", ChargeColor::CARTRIDGE, 3, 237.7, 4860,  0,   0},
+        {"4,M67", ChargeColor::CARTRIDGE, 4, 266.7, 5950,  0,   0},
+        {"5,M67", ChargeColor::CARTRIDGE, 5, 310.9, 7650,  0,   0},
+        {"6,M67", ChargeColor::CARTRIDGE, 6, 376.4, 9380,  0,   0},
+        {"7,M67", ChargeColor::CARTRIDGE, 7, 472.4, 11270, 0,   0}
+    };
+    p.ballistic_tables["M101/M102"] = t_m101;
+
+    BallisticTable t_m102;
+    t_m102.weapon_system = "M102/M108";
+    t_m102.points = {
+        {"1,M67", ChargeColor::CARTRIDGE, 1, 205.0, 3700,  0, 0},
+        {"2,M67", ChargeColor::CARTRIDGE, 2, 223.0, 4300,  0, 0},
+        {"3,M67", ChargeColor::CARTRIDGE, 3, 247.0, 5200,  0, 0},
+        {"4,M67", ChargeColor::CARTRIDGE, 4, 278.0, 6300,  0, 0},
+        {"5,M67", ChargeColor::CARTRIDGE, 5, 325.0, 8100,  0, 0},
+        {"6,M67", ChargeColor::CARTRIDGE, 6, 393.0, 9600,  0, 0},
+        {"7,M67", ChargeColor::CARTRIDGE, 7, 494.0, 11500, 0, 0}
+    };
+    p.ballistic_tables["M102/M108"] = t_m102;
+
+    p.restrictions = {
+        "Illuminant: 450,000 cd, 60 segundos de quemado",
+        "Paracaídas drogue retarda rotación del canister",
+        "Temp fuego: -40°F a +145°F"
+    };
+    return p;
+}
+
+// ============================================================
+// 155mm — HE M107  (Fuente: TM 43-0001-28 p.3-77)
+// ============================================================
+
+inline Projectile make_M107_HE() {
+    Projectile p;
+    p.designation  = "Projectile 155mm HE M107";
+    p.caliber      = Caliber::MM_155;
+    p.type         = ProjectileType::HE;
+    p.weight_lb    = 95.0;  // aprox (sin fuze, sin lifting plug, zona media)
+    p.source_tm    = "TM 43-0001-28, p.3-77";
+    p.compatible_charges = {"M3A1", "M4A2", "M119A2"};
+    p.prohibited_charges = {
+        {"M203", "M107 no tiene velocidades para M203; M203 solo para M198/M549A1"}
+    };
+
+    // M198/M199 — tabla más completa del TM
+    BallisticTable t_m198;
+    t_m198.weapon_system = "M198/M199";
+    t_m198.points = {
+        {"1,M3A1",  ChargeColor::GREEN, 1, 211.8,  4000, 673.6},
+        {"2,M3A1",  ChargeColor::GREEN, 2, 239.8,  5000, 722.4},
+        {"3,M3A1",  ChargeColor::GREEN, 3, 280.8,  6500, 690.4},
+        {"4,M3A1",  ChargeColor::GREEN, 4, 322.9,  8300, 760.9},
+        {"5,M3A1",  ChargeColor::GREEN, 5, 380.1,  9800, 717.2},
+        {"3,M4A2",  ChargeColor::WHITE, 3, 296.5,  7200, 734.9},
+        {"4,M4A2",  ChargeColor::WHITE, 4, 340.9,  8900, 736.8},
+        {"5,M4A2",  ChargeColor::WHITE, 5, 398.0, 10300, 756.1},
+        {"6,M4A2",  ChargeColor::WHITE, 6, 482.0, 12400, 758.4},
+        {"7,M4A2",  ChargeColor::WHITE, 7, 574.3, 14800, 760.3},
+        {"8,M119A1",ChargeColor::WHITE, 8, 684.3, 18100, 781.5}
+    };
+    p.ballistic_tables["M198/M199"] = t_m198;
+
+    // M126A1/M185
+    BallisticTable t_m185;
+    t_m185.weapon_system = "M126A1/M185";
+    t_m185.points = {
+        {"1,M3A1", ChargeColor::GREEN, 1, 207.3,  3900, 729.2},
+        {"2,M3A1", ChargeColor::GREEN, 2, 236.2,  4900, 710.1},
+        {"3,M3A1", ChargeColor::GREEN, 3, 275.8,  6500, 739.3},
+        {"4,M3A1", ChargeColor::GREEN, 4, 317.0,  8200, 744.1},
+        {"5,M3A1", ChargeColor::GREEN, 5, 374.9,  9800, 743.2},
+        {"3,M4A2", ChargeColor::WHITE, 3, 269.7,  6200, 700.7},
+        {"4,M4A2", ChargeColor::WHITE, 4, 313.9,  8000, 700.8},
+        {"5,M4A2", ChargeColor::WHITE, 5, 373.4,  9800, 778.8},
+        {"6,M4A2", ChargeColor::WHITE, 6, 461.8, 12000, 746.2},
+        {"7,M4A2", ChargeColor::WHITE, 7, 562.4, 14600, 772.5}
+    };
+    p.ballistic_tables["M126A1/M185"] = t_m185;
+
+    // M114A2
+    BallisticTable t_m114;
+    t_m114.weapon_system = "M114A2";
+    t_m114.points = {
+        {"3G,M3A1", ChargeColor::GREEN, 3, 261.9,  5852},
+        {"4G,M3A1", ChargeColor::GREEN, 4, 303.6,  7450},
+        {"5G,M3A1", ChargeColor::GREEN, 5, 358.1,  9167},
+        {"3W,M4A2", ChargeColor::WHITE, 3, 285.2,  7230},
+        {"4W,M4A2", ChargeColor::WHITE, 4, 326.5,  8630},
+        {"5W,M4A2", ChargeColor::WHITE, 5, 381.3, 10080},
+        {"6W,M4A2", ChargeColor::WHITE, 6, 460.7, 12150},
+        {"7W,M4A2", ChargeColor::WHITE, 7, 546.2, 14650},
+        {"8,M119A1",ChargeColor::WHITE, 8, 655.8, 17740},
+        {"7R,M119A2",ChargeColor::RED,  7, 660.0, 17740}
+    };
+    p.ballistic_tables["M114A2"] = t_m114;
+
+    p.restrictions = {
+        "Cavidad profunda: acepta fuze de proximidad (retirar supplementary charge)",
+        "Cavidad normal: solo fuzes PD, MT, MTSQ",
+        "Firing tables completas: FT 155-AN-C.C1"
+    };
+    return p;
+}
+
+// ============================================================
+// 155mm — HERA M549A1  (Fuente: TM 43-0001-28 p.3-119)
+// ============================================================
+
+inline Projectile make_M549A1_HERA() {
+    Projectile p;
+    p.designation  = "Projectile 155mm HERA M549A1";
+    p.caliber      = Caliber::MM_155;
+    p.type         = ProjectileType::HERA;
+    p.weight_lb    = 100.0;  // aprox (con motor cohete)
+    p.source_tm    = "TM 43-0001-28, p.3-119";
+    p.compatible_charges = {"M4A2", "M119A2", "M203"};
+    p.prohibited_charges = {
+        {"M119A1", "PROHIBIDA: causa fallo de ignición del motor cohete. Rounds cortos."},
+        {"M119",   "PROHIBIDA: causa fallo de ignición del motor cohete."},
+        {"M3A1",   "No hay firing tables para M549A1 con cargas de baja velocidad"}
+    };
+
+    BallisticTable t;
+    t.weapon_system = "Multiple";
+    t.points = {
+        // M114A2 / M109 — Zona 7 M4A2
+        {"7,M4A2",      ChargeColor::WHITE, 7, 560.8, 19300},
+        // M109A1/A2
+        {"7,M4A2",      ChargeColor::WHITE, 7, 567.5, 19500},
+        // M109A3 / M198 — M119A1/A2
+        {"8/7,M119A2",  ChargeColor::RED,   8, 678.2, 23500},
+        // M198 M203
+        {"8,M203",      ChargeColor::RED,   8, 826.0, 30100}
+    };
+    p.ballistic_tables["Summary"] = t;
+
+    p.restrictions = {
+        "Obturating band no puede estar roto o ausente — NO DISPARAR",
+        "Motor cohete SIEMPRE encendido (rocket cap removido antes de cargar)",
+        "No hay firing tables para rocket-OFF",
+        "Zona de seguridad 6,000m al frente del objetivo (posible no-ignición)",
+        "M549A1 en M199: no disparar si desgaste de origen excede 0.093 in",
+        "M119 y M119A1 PROHIBIDAS — short rounds garantizados"
+    };
+    return p;
+}
+
+// ============================================================
+// 155mm — AT M718A1 / RAAM-L  (Fuente: TM 43-0001-28 p.3-139)
+// ============================================================
+
+inline Projectile make_M718A1_AT() {
+    Projectile p;
+    p.designation  = "Projectile 155mm AT M718A1 (RAAM-L)";
+    p.caliber      = Caliber::MM_155;
+    p.type         = ProjectileType::AT_MINE;
+    p.weight_lb    = 103.0;
+    p.source_tm    = "TM 43-0001-28, p.3-139";
+    p.compatible_charges = {"M3A1", "M4A2", "M119A2"};
+    p.prohibited_charges = {
+        {"M203", "No firing tables; M203 solo para M549A1/M198"}
+    };
+
+    BallisticTable t_m198;
+    t_m198.weapon_system = "M198/M199";
+    t_m198.points = {
+        {"3G,M3A1",  ChargeColor::GREEN, 3, 261.9,  5852},
+        {"4G,M3A1",  ChargeColor::GREEN, 4, 303.6,  7450},
+        {"5G,M3A1",  ChargeColor::GREEN, 5, 358.1,  9167},
+        {"3W,M4A2",  ChargeColor::WHITE, 3, 285.2,  7230},
+        {"4W,M4A2",  ChargeColor::WHITE, 4, 326.5,  8630},
+        {"5W,M4A2",  ChargeColor::WHITE, 5, 381.3, 10080},
+        {"6W,M4A2",  ChargeColor::WHITE, 6, 460.7, 12150},
+        {"7W,M4A2",  ChargeColor::WHITE, 7, 546.2, 14650},
+        {"8,M119A1", ChargeColor::WHITE, 8, 655.8, 17740},
+        {"7R,M119A2",ChargeColor::RED,   7, 660.0, 17740}
+    };
+    p.ballistic_tables["M198/M199"] = t_m198;
+
+    p.restrictions = {
+        "Lifting plug DEBE reemplazarse por fuze M577 MTSQ antes de cargar",
+        "Minas (9x) se arman inmediatamente al tocar el suelo",
+        "L = Long life (>24h). Minas self-destruct si no son iniciadas",
+        "No disparar si rotating band está dañado o ausente"
+    };
+    return p;
+}
+
+// ============================================================
+// 155mm — ILLUM M485 Series  (Fuente: TM 43-0001-28 p.3-115)
+// ============================================================
+
+inline Projectile make_M485_ILLUM() {
+    Projectile p;
+    p.designation  = "Projectile 155mm Illuminating M485 Series";
+    p.caliber      = Caliber::MM_155;
+    p.type         = ProjectileType::ILLUM;
+    p.weight_lb    = 97.0;
+    p.source_tm    = "TM 43-0001-28, p.3-115";
+    p.compatible_charges = {"M3A1", "M4A2", "M119A2"};
+    p.prohibited_charges = {
+        {"M203", "M203 solo para M549A1; no hay datos para M485"}
+    };
+
+    // M126A1 (M109)
+    BallisticTable t_m126;
+    t_m126.weapon_system = "M126A1 (M109)";
+    t_m126.points = {
+        {"1,M3A1", ChargeColor::GREEN, 1, 211.4,  2949, 931.0, 24.5},
+        {"2,M3A1", ChargeColor::GREEN, 2, 239.1,  3923, 924.6, 29.2},
+        {"3,M3A1", ChargeColor::GREEN, 3, 282.6,  5587, 920.3, 36.0},
+        {"4,M3A1", ChargeColor::GREEN, 4, 324.7,  7236, 852.7, 39.0},
+        {"5,M3A1", ChargeColor::GREEN, 5, 385.6,  8816, 856.6, 44.1},
+        {"3,M4A2", ChargeColor::WHITE, 3, 275.0,  5293, 921.4, 34.9},
+        {"4,M4A2", ChargeColor::WHITE, 4, 320.7,  7057, 898.8, 40.4},
+        {"5,M4A2", ChargeColor::WHITE, 5, 380.0,  8635, 898.7, 45.7},
+        {"6,M4A2", ChargeColor::WHITE, 6, 473.6, 10993, 855.0, 50.7},
+        {"7,M4A2", ChargeColor::WHITE, 7, 576.5, 13586, 879.2, 59.7}
+    };
+    p.ballistic_tables["M126A1"] = t_m126;
+
+    // M185 (M109A1/A2/A3)
+    BallisticTable t_m185;
+    t_m185.weapon_system = "M185 (M109A1/A2/A3)";
+    t_m185.points = {
+        // Zona 1 restringida a combate de emergencia
+        {"1,M3A1", ChargeColor::GREEN, 1, 213.6,  2970, 995.1, 26.8},
+        {"2,M3A1", ChargeColor::GREEN, 2, 240.3,  3933, 954.7, 30.3},
+        {"3,M3A1", ChargeColor::GREEN, 3, 281.0,  5569, 874.2, 34.0},
+        {"4,M3A1", ChargeColor::GREEN, 4, 323.3,  7155, 896.4, 40.7},
+        {"5,M3A1", ChargeColor::GREEN, 5, 381.7,  8721, 865.6, 44.3},
+        {"3,M4A2", ChargeColor::WHITE, 3, 309.8,  6746, 865.1, 37.9},
+        {"4,M4A2", ChargeColor::WHITE, 4, 353.2,  7949, 906.3, 43.9},
+        {"5,M4A2", ChargeColor::WHITE, 5, 408.4,  9317, 870.0, 46.4},
+        {"6,M4A2", ChargeColor::WHITE, 6, 488.9, 11304, 885.5, 53.4},
+        {"7,M4A2", ChargeColor::WHITE, 7, 576.5, 13586, 878.5, 59.7},
+        {"8,M119A1",ChargeColor::WHITE, 8, 696.7, 17086, 856.5, 68.0}
+    };
+    p.ballistic_tables["M185"] = t_m185;
+
+    // M199 (M198)
+    BallisticTable t_m199;
+    t_m199.weapon_system = "M199 (M198)";
+    t_m199.points = {
+        {"1,M3A1",  ChargeColor::GREEN, 1, 212.8,  4000, 673.6, 0},
+        {"2,M3A1",  ChargeColor::GREEN, 2, 239.8,  5000, 722.4, 0},
+        {"3,M3A1",  ChargeColor::GREEN, 3, 280.8,  6500, 690.4, 0},
+        {"4,M3A1",  ChargeColor::GREEN, 4, 322.9,  8300, 760.9, 0},
+        {"5,M3A1",  ChargeColor::GREEN, 5, 380.1,  9800, 717.2, 0},
+        {"3,M4A2",  ChargeColor::WHITE, 3, 296.5,  7200, 734.9, 0},
+        {"4,M4A2",  ChargeColor::WHITE, 4, 340.9,  8900, 736.8, 0},
+        {"5,M4A2",  ChargeColor::WHITE, 5, 398.0, 10300, 756.1, 0},
+        {"6,M4A2",  ChargeColor::WHITE, 6, 482.0, 12400, 758.4, 0},
+        {"7,M4A2",  ChargeColor::WHITE, 7, 574.3, 14800, 760.3, 0},
+        {"8,M119A1",ChargeColor::WHITE, 8, 684.3, 18100, 781.5, 0}
+    };
+    p.ballistic_tables["M199"] = t_m199;
+
+    p.restrictions = {
+        "M485A1/A2: confiabilidad DEGRADA en Zonas 6-7 con fuze ≤10 seg",
+        "M485 (modelo base): SOLO Zonas 1-6, temperatura 40°F-145°F",
+        "Zona 1 en M114A1: tiempo de iluminación efectiva <90 seg",
+        "Zona 1 en M185: restringida a uso en combate de emergencia"
+    };
+    return p;
+}
+
+// ============================================================
+// Registry — acceso unificado
+// ============================================================
+
+class AmmunitionRegistry {
+public:
+    AmmunitionRegistry() {
+        // 105mm
+        add(make_M1_HE());
+        add(make_M84_HC_SMOKE());
+        add(make_M314A3_ILLUM());
+        // 155mm
+        add(make_M107_HE());
+        add(make_M549A1_HERA());
+        add(make_M718A1_AT());
+        add(make_M485_ILLUM());
+    }
+
+    const Projectile& get(const std::string& designation) const {
+        auto it = db_.find(designation);
+        if (it == db_.end())
+            throw std::invalid_argument("Projectile not found: " + designation);
+        return it->second;
+    }
+
+    bool validate_combination(const std::string& proj, const std::string& charge,
+                             # En generar_tabla_155mm() o función equivalente:
+                            # 1. Asegurar que el nuevo proyectil aparece en PROY_155
+                            # 2. Asegurar que sus cargas aparecen en CARGAS_155["proyectiles"]
+                            # 3. Ejecutar generador y validar salida FT_155MM_CALIBRADA.txt
+                            
+                            tabla = generar_tabla_155mm()
+                            with open("FT_155MM_CALIBRADA.txt", "w", encoding="utf-8") as f:
+                                f.write(tabla)                              std::string& reason) const {
+        const auto& p = get(proj);
+        if (!p.is_charge_compatible(charge)) {
+            reason = p.get_prohibition_reason(charge);
+            if (reason.empty()) reason = "Carga no listada como compatible";
+            return false;
+        }
+        return true;
+    }
+
+private:
+    void add(Projectile p) { db_[p.designation] = std::move(p); }
+    std::unordered_map<std::string, Projectile> db_;
+};
+
+}  // namespace firesys
+
+
+
+<div style="color-scheme: unset; forced-color-adjust: unset; math-depth: unset; position: absolute; position-anchor: unset; text-size-adjust: unset; appearance: unset; color: unset; font: unset; font-palette: unset; font-synthesis: unset; position-area: unset; text-orientation: unset; text-rendering: unset; text-spacing-trim: unset; -webkit-font-smoothing: unset; -webkit-locale: unset; -webkit-text-orientation: unset; -webkit-writing-mode: unset; writing-mode: unset; zoom: unset; accent-color: unset; place-content: unset; place-items: unset; place-self: unset; alignment-baseline: unset; anchor-name: unset; anchor-scope: unset; animation-composition: unset; animation: unset; animation-trigger: unset; app-region: unset; aspect-ratio: unset; backdrop-filter: unset; backface-visibility: unset; background: unset; background-blend-mode: unset; baseline-shift: unset; baseline-source: unset; block-size: unset; border-block: unset; border: unset; border-radius: unset; border-collapse: unset; border-end-end-radius: unset; border-end-start-radius: unset; border-inline: unset; border-start-end-radius: unset; border-start-start-radius: unset; bottom: unset; box-decoration-break: unset; box-shadow: unset; box-sizing: unset; break-after: unset; break-before: unset; break-inside: unset; buffered-rendering: unset; caption-side: unset; caret-animation: unset; caret-color: unset; caret-shape: unset; clear: unset; clip: unset; clip-path: unset; clip-rule: unset; color-interpolation: unset; color-interpolation-filters: unset; color-rendering: unset; columns: unset; column-fill: unset; gap: unset; column-rule: unset; column-span: unset; contain: unset; contain-intrinsic-block-size: unset; contain-intrinsic-size: unset; contain-intrinsic-inline-size: unset; container: unset; content: unset; content-visibility: unset; corner-shape: unset; corner-block-end-shape: unset; corner-block-start-shape: unset; counter-increment: unset; counter-reset: unset; counter-set: unset; cursor: unset; cx: unset; cy: unset; d: unset; display: unset; dominant-baseline: unset; dynamic-range-limit: unset; empty-cells: unset; field-sizing: unset; fill: unset; fill-opacity: unset; fill-rule: unset; filter: unset; flex: unset; flex-flow: unset; float: unset; flood-color: unset; flood-opacity: unset; grid: unset; grid-area: unset; height: unset; hyphenate-character: unset; hyphenate-limit-chars: unset; hyphens: unset; image-orientation: unset; image-rendering: unset; initial-letter: unset; inline-size: unset; inset-block: unset; inset-inline: unset; interactivity: unset; interest-delay: unset; interpolate-size: unset; isolation: unset; left: 0px; letter-spacing: unset; lighting-color: unset; line-break: unset; list-style: unset; margin-block: unset; margin: unset; margin-inline: unset; marker: unset; mask: unset; mask-type: unset; math-shift: unset; math-style: unset; max-block-size: unset; max-height: unset; max-inline-size: unset; max-width: unset; min-block-size: unset; min-height: unset; min-inline-size: unset; min-width: unset; mix-blend-mode: unset; object-fit: unset; object-position: unset; object-view-box: unset; offset: unset; opacity: unset; order: unset; orphans: unset; outline: unset; outline-offset: unset; overflow-anchor: unset; overflow-block: unset; overflow-clip-margin: unset; overflow-inline: unset; overflow-wrap: unset; overflow: unset; overlay: unset; overscroll-behavior-block: unset; overscroll-behavior-inline: unset; overscroll-behavior: unset; padding-block: unset; padding: unset; padding-inline: unset; page: unset; page-orientation: unset; paint-order: unset; perspective: unset; perspective-origin: unset; pointer-events: unset; position-try: unset; position-visibility: unset; print-color-adjust: unset; quotes: unset; r: unset; reading-flow: unset; reading-order: unset; resize: unset; right: unset; rotate: unset; ruby-align: unset; ruby-position: unset; rx: unset; ry: unset; scale: unset; scroll-behavior: unset; scroll-initial-target: unset; scroll-margin-block: unset; scroll-margin: unset; scroll-margin-inline: unset; scroll-marker-group: unset; scroll-padding-block: unset; scroll-padding: unset; scroll-padding-inline: unset; scroll-snap-align: unset; scroll-snap-stop: unset; scroll-snap-type: unset; scroll-target-group: unset; scroll-timeline: unset; scrollbar-color: unset; scrollbar-gutter: unset; scrollbar-width: unset; shape-image-threshold: unset; shape-margin: unset; shape-outside: unset; shape-rendering: unset; size: unset; speak: unset; stop-color: unset; stop-opacity: unset; stroke: unset; stroke-dasharray: unset; stroke-dashoffset: unset; stroke-linecap: unset; stroke-linejoin: unset; stroke-miterlimit: unset; stroke-opacity: unset; stroke-width: unset; tab-size: unset; table-layout: unset; text-align: unset; text-align-last: unset; text-anchor: unset; text-autospace: unset; text-box: unset; text-combine-upright: unset; text-decoration: unset; text-decoration-skip-ink: unset; text-emphasis: unset; text-emphasis-position: unset; text-indent: unset; text-justify: unset; text-overflow: unset; text-shadow: unset; text-transform: unset; text-underline-offset: unset; text-underline-position: unset; text-wrap: unset; timeline-scope: unset; timeline-trigger: unset; top: 0px; touch-action: unset; transform: unset; transform-box: unset; transform-origin: unset; transform-style: unset; transition: unset; translate: unset; trigger-scope: unset; user-select: unset; vector-effect: unset; vertical-align: unset; view-timeline: unset; view-transition-class: unset; view-transition-group: unset; view-transition-name: unset; visibility: unset; border-spacing: unset; -webkit-box-align: unset; -webkit-box-decoration-break: unset; -webkit-box-direction: unset; -webkit-box-flex: unset; -webkit-box-ordinal-group: unset; -webkit-box-orient: unset; -webkit-box-pack: unset; -webkit-box-reflect: unset; -webkit-line-break: unset; -webkit-line-clamp: unset; -webkit-mask-box-image: unset; -webkit-rtl-ordering: unset; -webkit-ruby-position: unset; -webkit-tap-highlight-color: unset; -webkit-text-combine: unset; -webkit-text-decorations-in-effect: unset; -webkit-text-fill-color: unset; -webkit-text-security: unset; -webkit-text-stroke: unset; -webkit-user-drag: unset; white-space-collapse: unset; widows: unset; width: unset; will-change: unset; word-break: unset; word-spacing: unset; x: unset; y: unset; z-index: unset;"><div style="color-scheme: unset; forced-color-adjust: unset; math-depth: unset; position: absolute; position-anchor: unset; text-size-adjust: unset; appearance: unset; color: unset; font: unset; font-palette: unset; font-synthesis: unset; position-area: unset; text-orientation: unset; text-rendering: unset; text-spacing-trim: unset; -webkit-font-smoothing: unset; -webkit-locale: unset; -webkit-text-orientation: unset; -webkit-writing-mode: unset; writing-mode: unset; zoom: unset; accent-color: unset; place-content: unset; place-items: unset; place-self: unset; alignment-baseline: unset; anchor-name: unset; anchor-scope: unset; animation-composition: unset; animation: unset; animation-trigger: unset; app-region: unset; aspect-ratio: unset; backdrop-filter: unset; backface-visibility: unset; background: unset; background-blend-mode: unset; baseline-shift: unset; baseline-source: unset; block-size: unset; border-block: unset; border: unset; border-radius: unset; border-collapse: unset; border-end-end-radius: unset; border-end-start-radius: unset; border-inline: unset; border-start-end-radius: unset; border-start-start-radius: unset; bottom: unset; box-decoration-break: unset; box-shadow: unset; box-sizing: unset; break-after: unset; break-before: unset; break-inside: unset; buffered-rendering: unset; caption-side: unset; caret-animation: unset; caret-color: unset; caret-shape: unset; clear: unset; clip: unset; clip-path: unset; clip-rule: unset; color-interpolation: unset; color-interpolation-filters: unset; color-rendering: unset; columns: unset; column-fill: unset; gap: unset; column-rule: unset; column-span: unset; contain: unset; contain-intrinsic-block-size: unset; contain-intrinsic-size: unset; contain-intrinsic-inline-size: unset; container: unset; content: unset; content-visibility: unset; corner-shape: unset; corner-block-end-shape: unset; corner-block-start-shape: unset; counter-increment: unset; counter-reset: unset; counter-set: unset; cursor: unset; cx: unset; cy: unset; d: unset; display: unset; dominant-baseline: unset; dynamic-range-limit: unset; empty-cells: unset; field-sizing: unset; fill: unset; fill-opacity: unset; fill-rule: unset; filter: unset; flex: unset; flex-flow: unset; float: unset; flood-color: unset; flood-opacity: unset; grid: unset; grid-area: unset; height: unset; hyphenate-character: unset; hyphenate-limit-chars: unset; hyphens: unset; image-orientation: unset; image-rendering: unset; initial-letter: unset; inline-size: unset; inset-block: unset; inset-inline: unset; interactivity: unset; interest-delay: unset; interpolate-size: unset; isolation: unset; left: 0px; letter-spacing: unset; lighting-color: unset; line-break: unset; list-style: unset; margin-block: unset; margin: unset; margin-inline: unset; marker: unset; mask: unset; mask-type: unset; math-shift: unset; math-style: unset; max-block-size: unset; max-height: unset; max-inline-size: unset; max-width: unset; min-block-size: unset; min-height: unset; min-inline-size: unset; min-width: unset; mix-blend-mode: unset; object-fit: unset; object-position: unset; object-view-box: unset; offset: unset; opacity: unset; order: unset; orphans: unset; outline: unset; outline-offset: unset; overflow-anchor: unset; overflow-block: unset; overflow-clip-margin: unset; overflow-inline: unset; overflow-wrap: unset; overflow: unset; overlay: unset; overscroll-behavior-block: unset; overscroll-behavior-inline: unset; overscroll-behavior: unset; padding-block: unset; padding: unset; padding-inline: unset; page: unset; page-orientation: unset; paint-order: unset; perspective: unset; perspective-origin: unset; pointer-events: unset; position-try: unset; position-visibility: unset; print-color-adjust: unset; quotes: unset; r: unset; reading-flow: unset; reading-order: unset; resize: unset; right: unset; rotate: unset; ruby-align: unset; ruby-position: unset; rx: unset; ry: unset; scale: unset; scroll-behavior: unset; scroll-initial-target: unset; scroll-margin-block: unset; scroll-margin: unset; scroll-margin-inline: unset; scroll-marker-group: unset; scroll-padding-block: unset; scroll-padding: unset; scroll-padding-inline: unset; scroll-snap-align: unset; scroll-snap-stop: unset; scroll-snap-type: unset; scroll-target-group: unset; scroll-timeline: unset; scrollbar-color: unset; scrollbar-gutter: unset; scrollbar-width: unset; shape-image-threshold: unset; shape-margin: unset; shape-outside: unset; shape-rendering: unset; size: unset; speak: unset; stop-color: unset; stop-opacity: unset; stroke: unset; stroke-dasharray: unset; stroke-dashoffset: unset; stroke-linecap: unset; stroke-linejoin: unset; stroke-miterlimit: unset; stroke-opacity: unset; stroke-width: unset; tab-size: unset; table-layout: unset; text-align: unset; text-align-last: unset; text-anchor: unset; text-autospace: unset; text-box: unset; text-combine-upright: unset; text-decoration: unset; text-decoration-skip-ink: unset; text-emphasis: unset; text-emphasis-position: unset; text-indent: unset; text-justify: unset; text-overflow: unset; text-shadow: unset; text-transform: unset; text-underline-offset: unset; text-underline-position: unset; text-wrap: unset; timeline-scope: unset; timeline-trigger: unset; top: 0px; touch-action: unset; transform: unset; transform-box: unset; transform-origin: unset; transform-style: unset; transition: unset; translate: unset; trigger-scope: unset; user-select: unset; vector-effect: unset; vertical-align: unset; view-timeline: unset; view-transition-class: unset; view-transition-group: unset; view-transition-name: unset; visibility: unset; border-spacing: unset; -webkit-box-align: unset; -webkit-box-decoration-break: unset; -webkit-box-direction: unset; -webkit-box-flex: unset; -webkit-box-ordinal-group: unset; -webkit-box-orient: unset; -webkit-box-pack: unset; -webkit-box-reflect: unset; -webkit-line-break: unset; -webkit-line-clamp: unset; -webkit-mask-box-image: unset; -webkit-rtl-ordering: unset; -webkit-ruby-position: unset; -webkit-tap-highlight-color: unset; -webkit-text-combine: unset; -webkit-text-decorations-in-effect: unset; -webkit-text-fill-color: unset; -webkit-text-security: unset; -webkit-text-stroke: unset; -webkit-user-drag: unset; white-space-collapse: unset; widows: unset; width: unset; will-change: unset; word-break: unset; word-spacing: unset; x: unset; y: unset; z-index: unset;"></div></div></body></html>
+
+
+
+<html>
+
+<head>
+<meta http-equiv=Content-Type content="text/html; charset=windows-1252">
+<meta name=Generator content="Microsoft Word 15 (filtered)">
+<title>Jeff's Calc Page</title>
+<style>
+<!--
+ /* Font Definitions */
+ @font-face
+	{font-family:"Cambria Math";
+	panose-1:2 4 5 3 5 4 6 3 2 4;}
+@font-face
+	{font-family:"Calibri Light";
+	panose-1:2 15 3 2 2 2 4 3 2 4;}
+ /* Style Definitions */
+ p.MsoNormal, li.MsoNormal, div.MsoNormal
+	{margin:0cm;
+	margin-bottom:.0001pt;
+	font-size:12.0pt;
+	font-family:"Times New Roman",serif;}
+h2
+	{mso-style-link:"Titre 2 Car";
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:18.0pt;
+	font-family:"Times New Roman",serif;
+	font-weight:bold;}
+h3
+	{mso-style-link:"Titre 3 Car";
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:13.5pt;
+	font-family:"Times New Roman",serif;
+	font-weight:bold;}
+a:link, span.MsoHyperlink
+	{color:blue;
+	text-decoration:underline;}
+a:visited, span.MsoHyperlinkFollowed
+	{color:blue;
+	text-decoration:underline;}
+p
+	{margin-right:0cm;
+	margin-left:0cm;
+	font-size:12.0pt;
+	font-family:"Times New Roman",serif;}
+span.Titre2Car
+	{mso-style-name:"Titre 2 Car";
+	mso-style-link:"Titre 2";
+	font-family:"Calibri Light",sans-serif;
+	color:#2E74B5;}
+span.Titre3Car
+	{mso-style-name:"Titre 3 Car";
+	mso-style-link:"Titre 3";
+	font-family:"Calibri Light",sans-serif;
+	color:#1F4D78;}
+p.msochpdefault, li.msochpdefault, div.msochpdefault
+	{mso-style-name:msochpdefault;
+	margin-right:0cm;
+	margin-left:0cm;
+	font-size:10.0pt;
+	font-family:"Times New Roman",serif;}
+.MsoChpDefault
+	{font-size:10.0pt;}
+@page WordSection1
+	{size:595.3pt 841.9pt;
+	margin:70.85pt 70.85pt 70.85pt 70.85pt;}
+div.WordSection1
+	{page:WordSection1;}
+ /* List Definitions */
+ ol
+	{margin-bottom:0cm;}
+ul
+	{margin-bottom:0cm;}
+-->
+</style>
+
+</head>
+
+<body bgcolor="#FFFFCC" background="index_fichiers/image001.jpg" lang=FR
+link=blue vlink=blue>
+
+<div class=WordSection1>
+
+<h2 align=center style='text-align:center'><span style='font-family:"Courier New"'><img
+width=377 height=159 src="index_fichiers/image002.jpg" alt=FACE41></span></h2>
+
+<h2 align=center style='text-align:center'><span lang=EN-GB style='font-family:
+"Courier New"'>Welcome to the Jeff's Calc Page !</span></h2>
+
+<h2 align=center style='text-align:center'><span style='font-family:"Courier New"'><img
+width=645 height=177 src="index_fichiers/image003.jpg" alt=MOD41></span></h2>
+
+<div class=MsoNormal align=center style='text-align:center'><span lang=EN-GB
+style='font-family:"Courier New"'>
+
+<hr size=2 width="100%" align=center>
+
+</span></div>
+
+<p><span lang=EN-GB style='font-family:"Courier New"'>This is my home page
+devoted to calculators, especially the HP-41C and the HP-71B. The HP-41CV was
+my first &quot;serious&quot; scientific programmable calculator, but the HP-71B
+is still my favourite HP machine.</span></p>
+
+<p><span lang=EN-GB style='font-family:"Courier New"'>This page is still very
+basic, and will be upgraded from time to time... </span></p>
+
+<p><span lang=EN-GB style='font-family:"Courier New"'>At the moment, you will
+find:</span></p>
+
+<p><b><span lang=EN-GB style='font-family:"Courier New"'>HP-41:</span></b></p>
+
+<ul style='margin-top:0cm' type=disc>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu41/index.html">my emu41 page</a> </span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu41/pi41.html">560 digits of PI with a HP-41C</a> </span></li>
+</ul>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<p><b><span lang=EN-GB style='font-family:"Courier New"'>HP-71B: </span></b></p>
+
+<ul style='margin-top:0cm' type=disc>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/index.html">my emu71 page</a> </span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/bug71.html">HP-71B bugs page</a> </span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/jpcrom.html">JPC ROM page</a> </span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/mathrom.html">Math ROM page</a></span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/forthrom.html">FORTH/Assembler ROM page</a></span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu71/emu72.html">my emu72 page</a></span></li>
+</ul>
+
+<p><b><span lang=EN-GB style='font-family:"Courier New"'>HP-IL</span></b><span
+lang=EN-GB style='font-family:"Courier New"'>:</span></p>
+
+<ul style='margin-top:0cm' type=disc>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="hpil/index.html">my HP-IL resource page</a></span></li>
+</ul>
+
+<p><b><span lang=EN-GB style='font-family:"Courier New"'>Other HP machines</span></b><span
+lang=EN-GB style='font-family:"Courier New"'>:</span></p>
+
+<ul style='margin-top:0cm' type=disc>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="emu75/index.html">my emu75 page</a> (HP-75C)</span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="hpplus/index.html">my HP Portable Plus resource page</a></span></li>
+</ul>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<p class=MsoNormal><b><span lang=EN-GB style='font-family:"Courier New"'>Documentations:</span></b></p>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<ul style='margin-top:0cm' type=disc>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="divers/index.html">French resources (JPC, PPC-T, manuals, ...)</a></span></li>
+ <li class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'><a
+     href="misc/index.html">Miscellaneous documents</a></span></li>
+</ul>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<p class=MsoNormal><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+<div class=MsoNormal align=center style='text-align:center'><span lang=EN-GB
+style='font-family:"Courier New"'>
+
+<hr size=2 width="100%" align=center>
+
+</span></div>
+
+<p align=center style='text-align:center'><span lang=EN-GB style='font-size:
+14.0pt'>J-F Garnier, 2021</span></p>
+
+<p><span lang=EN-GB style='font-family:"Courier New"'>&nbsp;</span></p>
+
+</div>
+
+</body>
+
+</html>
+
+
+
+.Button {
+	display: inline-block;
+	position: relative;
+	box-sizing: border-box;
+	border: 0;
+	border-radius: var(--button-border-radius);
+	cursor: default;
+	text-decoration: none;
+	font-family: var(--button-font-family);
+	outline: none;
+	background: transparent;
+	padding: 0;
+}
+
+.Button::before {
+	position: absolute;
+	content: '';
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	outline: none;
+	overflow: hidden;
+	border: var(--button-outline-width) solid transparent;
+	border-radius: var(--button-border-radius);
+}
+
+.Button_pressAnimation .Button-Content,
+.Button_pressAnimation::before {
+	transition: transform var(--button-transition-press) ease-out;
+	transform: scale(1);
+}
+
+.Button_pressAnimation.Button_pressed .Button-Content,
+.Button_pressAnimation.Button_pressed::before {
+	transition: transform 0s;
+	transform: scale(0.96);
+}
+
+.Button_size_l {
+	font-size: var(--button-size-l-font-size);
+	line-height: var(--button-size-l-line-height);
+}
+
+/* Content gaps */
+.Button_size_l .Button-Content:not(.Button-Content_raw) > * {
+	margin-inline-start: var(--button-size-l-indent-outer);
+}
+
+.Button_size_l .Button-Content:not(.Button-Content_raw) > * + * {
+	margin-inline-start: var(--button-size-l-indent-inner);
+}
+
+.Button_size_l .Button-Content:not(.Button-Content_raw) > *:last-child {
+	margin-inline-end: var(--button-size-l-indent-outer);
+}
+
+.Button_size_l .Button-Text {
+	padding: 0 var(--button-size-l-indent-content);
+}
+
+.Button_size_m {
+	font-size: var(--button-size-m-font-size);
+	line-height: var(--button-size-m-line-height);
+}
+
+/* Content gaps */
+.Button_size_m .Button-Content:not(.Button-Content_raw) > * {
+	margin-inline-start: var(--button-size-m-indent-outer);
+}
+
+.Button_size_m .Button-Content:not(.Button-Content_raw) > * + * {
+	margin-inline-start: var(--button-size-m-indent-inner);
+}
+
+.Button_size_m .Button-Content:not(.Button-Content_raw) > *:last-child {
+	margin-inline-end: var(--button-size-m-indent-outer);
+}
+
+.Button_size_m .Button-Text {
+	padding: 0 var(--button-size-m-indent-content);
+}
+
+.Button_size_s {
+	font-size: var(--button-size-s-font-size);
+	line-height: var(--button-size-s-line-height);
+}
+
+/* Content gaps */
+.Button_size_s .Button-Content:not(.Button-Content_raw) > * {
+	margin-inline-start: var(--button-size-s-indent-outer);
+}
+
+.Button_size_s .Button-Content:not(.Button-Content_raw) > * + * {
+	margin-inline-start: var(--button-size-s-indent-inner);
+}
+
+.Button_size_s .Button-Content:not(.Button-Content_raw) > *:last-child {
+	margin-inline-end: var(--button-size-s-indent-outer);
+}
+
+.Button_size_s .Button-Text {
+	padding: 0 var(--button-size-s-indent-content);
+}
+
+.Button_view_action {
+	color: var(--button-view-action-typo-color-base);
+}
+
+.Button_view_action:hover {
+	color: var(--button-view-action-typo-color-hovered);
+}
+
+.Button_view_action::before {
+	background-color: var(--button-view-action-fill-color-base);
+	transition: background-color var(--button-transition-hover) linear;
+}
+
+.Button_view_action:hover::before {
+	background-color: var(--button-view-action-fill-color-hovered);
+}
+
+/* Focus */
+.Button_focusVisible.Button_view_action:focus::before {
+	border-color: var(--button-view-action-outline-color);
+}
+
+/* Disabled */
+.Button_disabled.Button_view_action::before {
+	background-color: var(--button-view-action-fill-color-disabled);
+}
+
+.Button_disabled.Button_view_action {
+	color: var(--button-view-action-typo-color-disabled);
+}
+
+.Button_view_clear {
+	color: var(--button-view-clear-typo-color-base);
+}
+
+/* Focus */
+.Button_focusVisible.Button_view_clear:focus::before {
+	border-color: var(--button-view-clear-outline-color);
+}
+
+/* Disabled */
+.Button_view_clear:not(.Button_disabled) .Button-Content {
+	opacity: 0.65;
+	transition: opacity var(--button-transition-hover) linear;
+}
+
+.Button_view_clear:not(.Button_disabled):hover .Button-Content {
+	opacity: 1;
+}
+
+.Button_disabled.Button_view_clear {
+	color: var(--button-view-clear-typo-color-disabled);
+}
+
+.Button_disabled.Button_view_clear::before {
+	background-color: var(--button-view-clear-fill-color-disabled);
+}
+
+.Button_view_default {
+	color: var(--button-view-default-typo-color-base);
+}
+
+.Button_view_default::before {
+	background-color: var(--button-view-default-fill-color-base);
+}
+
+.Button_view_default:hover::before {
+	background-color: var(--button-view-default-fill-color-hovered);
+	transition: background-color var(--button-transition-hover) linear;
+}
+
+/* Focus */
+.Button_focusVisible.Button_view_default:focus::before {
+	border-color: var(--button-view-default-outline-color);
+}
+
+/* Disabled */
+.Button_disabled.Button_view_default {
+	color: var(--button-view-default-typo-color-disabled);
+}
+
+.Button_disabled.Button_view_default::before {
+	background-color: var(--button-view-default-fill-color-disabled);
+}
+
+.Button_view_pseudo {
+	color: var(--button-view-pseudo-typo-color-base);
+}
+
+.Button_disabled.Button_view_pseudo {
+	color: var(--button-view-pseudo-typo-color-disabled);
+}
+
+.Button_view_pseudo.Button::before {
+	border:
+		var(--button-border-width) solid
+		var(--button-view-pseudo-border-color-base);
+	background-color: var(--button-view-pseudo-fill-color-base);
+	transition:
+		background-color var(--button-transition-hover) linear,
+		border-color var(--button-transition-hover) linear;
+}
+
+/* Focus */
+.Button_focusVisible.Button_view_pseudo:focus::before {
+	border-color: var(--button-view-pseudo-outline-color);
+}
+
+/* Disabled */
+.Button_view_pseudo:not(.Button_disabled):hover::before {
+	background-color: var(--button-view-pseudo-fill-color-hovered);
+}
+
+.Button_disabled.Button_view_pseudo::before {
+	border-color: var(--button-view-pseudo-fill-color-disabled);
+	background-color: var(--button-view-pseudo-fill-color-disabled);
+}
+
+.Button_width_max {
+	width: 100%;
+}
+
+.Button-Content:not(.Button-Content_raw) {
+	position: relative;
+	display: flex;
+	width: 100%;
+}
+
+.Button-Text {
+	position: relative;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	overflow: hidden;
+	text-align: start;
+	width: 100%;
+}
+
+.Button .Button-Icon {
+	pointer-events: none;
+}
+
+.Button_content_icon.Button_size_m .Button-Content {
+	margin: 0 6.4px;
+}
+
+.Button_content_icon.Button_size_s .Button-Content {
+	margin: 0 4.8px;
+}
+
+.Button {
+	max-width: 100%;
+}
+
+.Icon {
+	display: inline-block;
+	background-repeat: no-repeat;
+	background-position: 50%;
+}
+
+/**
+ * For correct positioning relative baseline.
+ * Height of block define by inherit line-height.
+ */
+.Icon::after {
+	visibility: hidden;
+	content: '\00A0';
+}
+
+.Icon_hasGlyph {
+	position: relative;
+}
+
+.Icon_hasGlyph svg {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	fill: currentColor;
+}
+
+.Icon_hasGlyph.Icon_scalable svg {
+	width: 100%;
+	height: 100%;
+}
+
+.Icon_size_m {
+	min-width: var(--icon-size-m);
+	min-height: var(--icon-size-m);
+}
+
+.Icon_size_s {
+	min-width: var(--icon-size-s);
+	min-height: var(--icon-size-s);
+}
+
+.Menu {
+	box-sizing: border-box;
+	font-family: var(--menu-font-family);
+	border-radius: var(--menu-border-radius);
+}
+
+.Select {
+	display: inline-block;
+	position: relative;
+}
+
+.Select-Trigger {
+	width: 100%;
+}
+
+.Select-TriggerIconContainer {
+	display: inline-block;
+	width: 8px;
+}
+
+.Select-TriggerIcon {
+	margin-left: 50%;
+	transform: translateX(-50%);
+}
+
+.Select-List {
+	background: var(--select-fill-color-base);
+	border-radius: var(--select-border-radius);
+	min-width: 100%;
+	max-height: inherit;
+	overflow: auto;
+	outline: none;
+}
+
+.Select-List:not(.Select-List_visible) {
+	display: none;
+}
+
+.Select_width_max {
+	width: 100%;
+}
+
+.Select_width_max .Select-Trigger {
+	width: 100%;
+}
+
+.Select_listboxSize_max .Select-List {
+	min-width: max-content;
+}
+
+.Select_listboxSize_max .Select-List .Menu-Container {
+	min-width: inherit;
+}
+
+.Button.Button_focusVisible:focus::before {
+	border-width: var(--button-outline-width);
+}
+
+.Button_view_link {
+	color: var(--button-view-link-typo-color-base);
+	text-decoration: underline;
+	text-decoration-thickness: auto;
+	text-underline-offset: 15%;
+	text-underline-position: from-font;
+}
+
+.Button_view_link:hover {
+	color: var(--button-view-link-typo-color-hovered);
+}
+
+/* Focus */
+.Button_focusVisible.Button_view_link:focus::before {
+	border-color: var(--button-view-link-outline-color);
+}
+
+/* Disabled */
+.Button_disabled.Button_view_link {
+	color: var(--button-view-link-typo-color-disabled);
+	text-decoration: none;
+}
+
+.Icon_size_l {
+	min-width: var(--icon-size-l);
+	min-height: var(--icon-size-l);
+}
+
+.Icon_size_xl {
+	min-width: var(--icon-size-xl);
+	min-height: var(--icon-size-xl);
+}
+
+.Icon_size_xs {
+	min-width: var(--icon-size-xs);
+	min-height: var(--icon-size-xs);
+}
+
+.Popup {
+	position: absolute;
+}
+
+.Popup[data-popper-reference-hidden],
+.Popup[data-popper-escaped] {
+	visibility: hidden !important;
+	pointer-events: none !important;
+}
+
+.Popup-Tail {
+	z-index: -1;
+	pointer-events: none;
+	width: 16px;
+	height: 16px;
+}
+
+.Popup-Tail::after {
+	display: block;
+	content: '';
+	width: 100%;
+	height: 100%;
+	border-radius: 0 0 3px 0;
+	transform: translateY(-50%) rotate(45deg);
+}
+
+.Popup[data-popper-placement^='top'] .Popup-Tail {
+	top: 100%;
+	transform: rotate(0deg);
+}
+
+.Popup[data-popper-placement^='right'] .Popup-Tail {
+	right: 100%;
+	transform: rotate(90deg);
+}
+
+.Popup[data-popper-placement^='bottom'] .Popup-Tail {
+	bottom: 100%;
+	transform: rotate(180deg);
+}
+
+.Popup[data-popper-placement^='left'] .Popup-Tail {
+	left: 100%;
+	transform: rotate(270deg);
+}
+
+/* Increase specificity for IE11 */
+.Popup.Popup_nonvisual[class] {
+	border: 0;
+	background: none;
+	box-shadow: none;
+}
+
+.Popup.Popup_nonvisual[class]::before {
+	content: none;
+	box-shadow: none;
+}
+
+.Popup.Popup_nonvisual .Popup-Tail {
+	visibility: hidden;
+}
+
+.Popup_view_default {
+	visibility: hidden;
+	box-sizing: border-box;
+	border-radius: var(--popup-border-radius);
+	color: var(--popup-view-default-typo-color);
+	background-color: var(--popup-view-default-fill-color);
+	box-shadow: 0 1.5ex 2ex -1ex rgba(0, 0, 0, 0.3);
+	animation-duration: 0.1s;
+	animation-timing-function: ease-out;
+	animation-fill-mode: forwards;
+}
+
+.Popup_view_default::before {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: -1;
+	content: '';
+	border-radius: inherit;
+	box-shadow: 0 0 0 1px var(--popup-view-default-border-color-shadow);
+}
+
+.Popup_view_default.Popup_visible {
+	visibility: visible;
+}
+
+.Popup_view_default .Popup-Tail::after {
+	background: var(--popup-view-default-fill-color);
+	box-shadow: 0 0 0 0.15ex var(--popup-view-default-border-color-shadow);
+}
+
+/* Setup animations for directions */
+.Popup_view_default.Popup[data-popper-placement^='bottom'] {
+	animation-name: popup_view_default_bottom;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='bottom'].Popup_visible {
+	animation-name: popup_view_default_bottom_visible;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='top'] {
+	animation-name: popup_view_default_top;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='top'].Popup_visible {
+	animation-name: popup_view_default_top_visible;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='right'] {
+	animation-name: popup_view_default_right;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='right'].Popup_visible {
+	animation-name: popup_view_default_right_visible;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='left'] {
+	animation-name: popup_view_default_left;
+}
+
+.Popup_view_default.Popup[data-popper-placement^='left'].Popup_visible {
+	animation-name: popup_view_default_left_visible;
+}
+
+/* Animations list. All animations shake container */
+@keyframes popup_view_default_bottom {
+	0% {
+		visibility: visible;
+		opacity: 1;
+		transform: translateY(0);
+	}
+
+	99% {
+		transform: translateY(10px);
+	}
+
+	100% {
+		visibility: hidden;
+		opacity: 0;
+	}
+}
+
+@keyframes popup_view_default_bottom_visible {
+	0% {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+
+	100% {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes popup_view_default_top {
+	0% {
+		visibility: visible;
+		opacity: 1;
+		transform: translateY(0);
+	}
+
+	99% {
+		transform: translateY(-10px);
+	}
+
+	100% {
+		visibility: hidden;
+		opacity: 0;
+	}
+}
+
+@keyframes popup_view_default_top_visible {
+	0% {
+		opacity: 0;
+		transform: translateY(-10px);
+	}
+
+	100% {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@keyframes popup_view_default_right {
+	0% {
+		visibility: visible;
+		opacity: 1;
+		transform: translateX(0);
+	}
+
+	99% {
+		transform: translateX(10px);
+	}
+
+	100% {
+		visibility: hidden;
+		opacity: 0;
+	}
+}
+
+@keyframes popup_view_default_right_visible {
+	0% {
+		opacity: 0;
+		transform: translateX(10px);
+	}
+
+	100% {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+@keyframes popup_view_default_left {
+	0% {
+		visibility: visible;
+		opacity: 1;
+		transform: translateX(0);
+	}
+
+	99% {
+		transform: translateX(-10px);
+	}
+
+	100% {
+		visibility: hidden;
+		opacity: 0;
+	}
+}
+
+@keyframes popup_view_default_left_visible {
+	0% {
+		opacity: 0;
+		transform: translateX(-10px);
+	}
+
+	100% {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+.Menu-Container {
+	display: block;
+	margin: 0;
+}
+
+.Menu-Group_hidden {
+	display: none;
+}
+
+.Menu-GroupTitle {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.Menu-Item_hidden {
+	display: none;
+}
+
+.Textinput {
+	position: relative;
+	display: inline-block;
+	font-family: var(--textinput-font-family);
+}
+
+.Textinput-Wrap {
+	position: relative;
+	display: flex;
+}
+
+.Textinput-Control {
+	display: block;
+	box-sizing: border-box;
+	box-shadow: none;
+	width: 100%;
+	background-color: unset;
+	outline: none;
+	margin: none;
+	border: none;
+	font-family: var(--textinput-font-family);
+}
+
+.Textinput-Box {
+	position: absolute;
+	display: block;
+	left: 0;
+	right: 0;
+	top: 0;
+	bottom: 0;
+}
+
+.Textinput-Hint {
+	display: block;
+	width: 100%;
+}
+
+.Textinput_view_default .Textinput-Icon {
+	box-sizing: border-box;
+}
+
+.Textinput-Clear:not(.Textinput-Clear_visible) {
+	display: none;
+}
+
+.Textinput_view_default {
+	z-index: 0;
+}
+
+/* Wrap */
+.Textinput_view_default .Textinput-Wrap {
+	padding: var(--textinput-border-width);
+}
+
+/* Box */
+.Textinput_view_default .Textinput-Box {
+	border-width: var(--textinput-border-width);
+	border-style: solid;
+	border-color: var(--textinput-view-default-border-color-base);
+	border-radius: var(--textinput-border-radius);
+	background-color: var(--textinput-view-default-fill-color-base);
+	z-index: 1;
+	transition: border-color var(--textinput-transition-hover) linear;
+}
+
+.Textinput_view_default .Textinput-Wrap:hover .Textinput-Box {
+	border-color: var(--textinput-view-default-border-color-hover);
+}
+
+.Textinput_view_default .Textinput-Control:focus ~ .Textinput-Box {
+	border-color: var(--textinput-view-default-border-color-focus);
+}
+
+/* increase a specificity to overwrite pseudo classes */
+.Textinput_view_default.Textinput_disabled.Textinput_disabled .Textinput-Box {
+	background-color: var(--textinput-view-default-fill-color-disabled);
+	border-color: var(--textinput-view-default-border-color-disabled);
+}
+
+/* Control */
+.Textinput_view_default .Textinput-Control {
+	color: var(--textinput-view-default-typo-color-base);
+	z-index: 2;
+}
+
+.Textinput_view_default.Textinput_disabled .Textinput-Control {
+	color: var(--textinput-view-default-typo-color-disabled);
+}
+
+/* Icon */
+.Textinput_view_default .Textinput-Icon {
+	z-index: 2;
+}
+
+/* Clear */
+.Textinput_view_default .Textinput-Clear {
+	opacity: 0.7;
+	z-index: 3;
+	transition: opacity var(--textinput-transition-hover) linear;
+}
+
+.Textinput_view_default .Textinput-Clear:hover {
+	opacity: 1;
+}
+
+/* Hint */
+.Textinput_view_default .Textinput-Hint {
+	color: var(--textinput-view-default-typo-color-base);
+}
+
+.Textinput_view_default.Textinput_state_error .Textinput-Hint {
+	color: var(--textinput-view-default-typo-color-error);
+}
+
+/* state error styles */
+.Textinput_view_default.Textinput_state_error .Textinput-Control ~ .Textinput-Box {
+	border-color: var(--textinput-view-default-border-color-error-base);
+}
+
+.Textinput_view_default.Textinput_state_error .Textinput-Wrap:hover .Textinput-Box {
+	border-color: var(--textinput-view-default-border-color-error-hover);
+}
+
+.Textinput_view_default.Textinput_state_error .Textinput-Control:focus ~ .Textinput-Box {
+	border-color: var(--textinput-view-default-border-color-error-focus);
+}
+
+.Textinput_size_m {
+	font-size: var(--textinput-size-m-font-size);
+}
+
+/* Control */
+.Textinput_size_m .Textinput-Control {
+	font-size: var(--textinput-size-m-font-size);
+	line-height: var(--textinput-size-m-line-height);
+	padding: var(--textinput-size-m-control-indent);
+}
+
+/* Clear */
+.Textinput_size_m .Textinput-Clear {
+	margin: 0 var(--textinput-size-m-clear-indent);
+}
+
+/* Hint */
+.Textinput_size_m .Textinput-Hint {
+	font-size: var(--textinput-size-m-hint-font-size);
+	margin-top: var(--textinput-size-m-hint-indent);
+}
+
+.Textinput_size_s {
+	font-size: var(--textinput-size-s-font-size);
+}
+
+/* Control */
+.Textinput_size_s .Textinput-Control {
+	font-size: var(--textinput-size-s-font-size);
+	line-height: var(--textinput-size-s-line-height);
+	padding: var(--textinput-size-s-control-indent);
+}
+
+/* Clear */
+.Textinput_size_s .Textinput-Clear {
+	margin: 0 var(--textinput-size-m-clear-indent);
+}
+
+/* Hint */
+.Textinput_size_s .Textinput-Hint {
+	font-size: var(--textinput-size-s-hint-font-size);
+	margin-top: var(--textinput-size-s-hint-indent);
+}
+
+.Menu-Search {
+	display: block;
+}
+
+.Menu-ItemContent {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.Menu-ItemTick {
+	display: inline-block;
+	fill: currentColor;
+}
+
+.Menu_view_default {
+	background-color: var(--menu-view-default-fill-color-base);
+}
+
+.Menu_disabled.Menu_view_default {
+	background-color: var(--menu-view-default-fill-color-disabled);
+}
+
+.Menu_view_default :not(.Menu-Item_hidden):not(.Menu-Group_hidden) ~ .Menu-Group {
+	border-top:
+		var(--menu-view-default-group-border-width) solid
+		var(--menu-view-default-group-border-color-base);
+}
+
+.Menu_view_default .Menu-Item {
+	cursor: default;
+	color: var(--menu-view-default-item-typo-color-base);
+	background-color: transparent;
+}
+
+.Menu_view_default .Menu-Item_cursor,
+.Menu_view_default .Menu-Item_selected {
+	color: var(--menu-view-default-item-typo-color-hover);
+	background-color: var(--menu-view-default-item-fill-color-hover);
+}
+
+.Menu_view_default .Menu-Item_disabled {
+	color: var(--menu-view-default-item-typo-color-disabled);
+	background-color: transparent;
+}
+
+.Menu_view_default .Menu-GroupTitle {
+	color: var(--menu-view-default-title-typo-color-base);
+}
+
+.Menu_view_action {
+	background-color: var(--menu-view-action-fill-color-base);
+}
+
+.Menu_disabled.Menu_view_action {
+	background-color: var(--menu-view-action-fill-color-disabled);
+}
+
+.Menu_view_action :not(.Menu-Item_hidden):not(.Menu-Group_hidden) ~ .Menu-Group {
+	border-top:
+		var(--menu-view-action-group-border-width) solid
+		var(--menu-view-action-group-border-color-base);
+}
+
+.Menu_view_action .Menu-Item {
+	cursor: default;
+	color: var(--menu-view-action-item-typo-color-base);
+	background-color: transparent;
+}
+
+.Menu_view_action .Menu-Item_cursor,
+.Menu_view_action .Menu-Item_selected {
+	color: var(--menu-view-action-item-typo-color-hover);
+	background-color: var(--menu-view-action-item-fill-color-hover);
+}
+
+.Menu_view_action .Menu-Item_disabled {
+	color: var(--menu-view-action-item-typo-color-disabled);
+	background-color: transparent;
+}
+
+.Menu_view_action .Menu-GroupTitle {
+	color: var(--menu-view-action-title-typo-color-base);
+}
+
+.Menu_size_s .Menu-Container {
+	font-size: var(--menu-size-s-font-size);
+}
+
+/* edge gaps */
+.Menu_size_s .Menu-Container::before,
+.Menu_size_s .Menu-Container::after {
+	display: block;
+	content: '';
+	height: var(--menu-size-m-container-indent);
+}
+
+.Menu_size_s .Menu-Item {
+	padding: 0 var(--menu-size-m-item-indent);
+	line-height: var(--menu-size-m-item-line-height);
+}
+
+.Menu_size_s .Menu-Item_raw {
+	padding: 0;
+}
+
+.Menu_size_s .Menu-GroupTitle {
+	line-height: var(--menu-size-m-title-line-height);
+	padding: 0 var(--menu-size-m-title-indent);
+}
+
+.Menu_size_s .Menu-ItemContent:not(.Menu-ItemContent_raw) {
+	padding: 0 var(--menu-size-m-item-indent);
+}
+
+.Menu_size_s .Menu-ItemContent:not(.Menu-ItemContent_raw) > *:not(:last-child) {
+	margin-inline-end: var(--menu-indent-m);
+}
+
+.Menu_size_m .Menu-Container {
+	font-size: var(--menu-size-m-font-size);
+}
+
+/* edge gaps */
+.Menu_size_m .Menu-Container::before,
+.Menu_size_m .Menu-Container::after {
+	display: block;
+	content: '';
+	height: var(--menu-size-m-container-indent);
+}
+
+.Menu_size_m .Menu-Item {
+	padding: 0 var(--menu-size-m-item-indent);
+	line-height: var(--menu-size-m-item-line-height);
+}
+
+.Menu_size_m .Menu-Item_raw {
+	padding: 0;
+}
+
+.Menu_size_m .Menu-GroupTitle {
+	line-height: var(--menu-size-m-title-line-height);
+	padding: 0 var(--menu-size-m-title-indent);
+}
+
+.Menu_size_m .Menu-ItemContent:not(.Menu-ItemContent_raw) {
+	padding: 0 var(--menu-size-m-item-indent);
+}
+
+.Menu_size_m .Menu-ItemContent:not(.Menu-ItemContent_raw) > *:not(:last-child) {
+	margin-inline-end: var(--menu-indent-m);
+}
+
+.Menu_size_l .Menu-Container {
+	font-size: var(--menu-size-l-font-size);
+}
+
+/* edge gaps */
+.Menu_size_s .Menu-Container::before,
+.Menu_size_s .Menu-Container::after {
+	display: block;
+	content: '';
+	height: var(--menu-size-m-container-indent);
+}
+
+.Menu_size_l .Menu-Item {
+	padding: 0 var(--menu-size-m-item-indent);
+	line-height: var(--menu-size-m-item-line-height);
+}
+
+.Menu_size_l .Menu-Item_raw {
+	padding: 0;
+}
+
+.Menu_size_l .Menu-GroupTitle {
+	line-height: var(--menu-size-m-title-line-height);
+	padding: 0 var(--menu-size-m-title-indent);
+}
+
+.Menu_size_l .Menu-ItemContent:not(.Menu-ItemContent_raw) {
+	padding: 0 var(--menu-size-m-item-indent);
+}
+
+.Menu_size_l .Menu-ItemContent:not(.Menu-ItemContent_raw) > *:not(:last-child) {
+	margin-inline-end: var(--menu-indent-m);
+}
+
+.Select-Popup {
+	z-index: 1;
+}
+
+.LanguagePanel_view_wide > *:not(:first-child) {
+	margin-top: var(--typography-layout-indent-m-all);
+}
+
+.LanguagePanel:not(.LanguagePanel_view_wide) > *:not(:first-child) {
+	margin-left: var(--typography-layout-indent-m-all);
+}
+
+.LanguagePanel_view_wide .LanguagePanel-Select {
+	width: 100%;
+}
+
+.LanguagePanel_view_wide .LanguagePanel-Button {
+	width: 100%;
+}
+
+.LanguagePanel_view_wide .Button-Text {
+	text-align: center;
+	font-size: 1.1em;
+	padding: 0.1em;
+}
+
+.PageTranslator {
+	font-family: var(--typography-font-family);
+}
+
+.PageTranslator > :not(:last-child) {
+	margin-block-end: var(--typography-controls-indent-l);
+}
+
+.PageTranslator-Header {
+	margin: var(--typography-layout-indent-l-all) 0 var(--typography-layout-indent-m-all);
+}
+
+/* Mobile view */
+.PageTranslator-TranslateButton_fill {
+	width: 100%;
+}
+
+.PageTranslator-TranslateButton_fill .Button-Text {
+	text-align: center;
+	font-size: 1.1em;
+	padding: 0.1em;
+}
+
+.PageTranslator-LangPanel {
+	display: inline;
+}
+
+.PageTranslator_view_mobile .PageTranslator-LangPanel {
+	display: block;
+}
+
+/* Counter */
+.PageTranslator-Counter {
+	display: inline-block;
+	background-color: var(--button-view-default-fill-color-disabled);
+	color: var(--button-view-default-typo-color-disabled);
+	font-size: var(--button-size-s-font-size);
+	line-height: var(--button-size-s-line-height);
+	padding: 0 var(--button-size-m-indent-inner);
+	border-radius: var(--button-border-radius);
+}
+
+.PageTranslator-Counter:not(:last-child) {
+	margin-inline-end: var(--button-size-s-indent-outer);
+}
+
+.PageTranslator-CounterContent {
+	margin-left: var(--typography-layout-indent-s-all);
+	border-left: 1px solid currentcolor;
+	padding-left: var(--typography-layout-indent-s-all);
+}
+
+/* List */
+.PageTranslator-List {
+	margin: 0;
+	padding: 0;
+}
+
+.PageTranslator-ListItem {
+	list-style: none;
+	padding: 0;
+}
+
+.PageTranslator-ListItem:not(:last-child) {
+	margin-block-end: var(--typography-controls-indent-m);
+}
+
+/* Placeholder */
+.PageTranslator-Placeholder {
+	margin-bottom: 8px;
+}
+
+/* Option */
+.PageTranslator-OptionTitle {
+	margin-right: var(--typography-controls-indent-l);
+}
+
+/* Indent for space to select list */
+.PageTranslator-OptionValue {
+	margin-right: var(--typography-controls-indent-l);
+}
+
+/* Container */
+.PageTranslator-Container_indent_vertical > :not(:last-child) {
+	margin-block-end: var(--typography-controls-indent-l);
+}
+
+.PageTranslator-Container_indent_horizontal > :not(:last-child) {
+	margin-inline-end: var(--typography-controls-indent-l);
+}
+
+/* .PageTranslator-OptionContainer_mobile */
+.PageTranslator-OptionContainer_mobile .PageTranslator-OptionTitle {
+	display: block;
+}
+
+.PageTranslator-OptionContainer_mobile .PageTranslator-OptionValue .Select {
+	width: 100%;
+}
+
+/* TODO: replace to tokens */
+.OriginalTextPopup {
+	background: #eee;
+	color: #000;
+	padding: 16px;
+	max-width: 400px;
+}
+
+/*
+* 1. enable 3d acceleration to fix bug when inner content is disappear with `-webkit-overflow-scrolling: touch` on mobile safari
+* source: https://github.com/bem/yandex-ui/blob/036885bc9d32db5645d74da0507a1e951d9ca2e0/src/Modal/Modal.css
+*/
+
+.Modal {
+	position: fixed;
+	z-index: 1300;
+	top: 0;
+	left: 0;
+
+	display: none;
+
+	width: 100%;
+	height: 100%;
+}
+
+.Modal-Wrapper {
+	position: fixed;
+	top: 0;
+	left: 0;
+
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+
+	width: 100%;
+	height: 100%;
+}
+
+.Modal-Wrapper {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	box-sizing: border-box;
+	flex-wrap: wrap;
+}
+
+.Modal.Modal_visible {
+	display: block;
+}
+
+.Modal-Cell {
+	max-width: 100%;
+	box-sizing: border-box;
+	text-align: center;
+}
+
+.Modal-Cell_align_top {
+	vertical-align: top;
+}
+
+.Modal-Cell_align_middle {
+	vertical-align: middle;
+}
+
+.Modal-Cell_align_bottom {
+	vertical-align: bottom;
+}
+
+.Modal-Content {
+	position: relative;
+	z-index: 1;
+
+	display: inline-block;
+
+	text-align: left;
+
+	border-radius: var(--modal-border-radius);
+	outline: none;
+
+	transform: translate3d(0, 0, 0); /* 1 */
+
+	max-width: 100%;
+}
+
+.Modal-Overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+
+	width: 100%;
+	height: 100%;
+	touch-action: none;
+
+	-webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+.Modal_view_default .Modal-Content {
+	padding: var(--modal-size-m-content-indent);
+	background-color: var(--modal-view-default-fill-color);
+	border-radius: var(--modal-view-default-border-radius);
+}
+
+.Modal_view_default .Modal-Overlay {
+	background-color: var(--modal-view-default-overlay-fill-color);
+}
+
+.Modal.Modal_view_default {
+	display: block;
+	visibility: hidden;
+	margin: -9999px 0 0 -9999px;
+}
+
+.Modal_view_default.Modal_visible {
+	visibility: visible;
+	margin: 0;
+}
+
+.Modal_view_default .Modal-Overlay,
+.Modal_view_default .Modal-Wrapper {
+	visibility: hidden;
+	margin: -9999px 0 0 -9999px;
+}
+
+.Modal_view_default .Modal-Overlay,
+.Modal_view_default .Modal-Wrapper,
+.Modal_view_default .Modal-Content {
+	animation-duration: 0.2s;
+	animation-timing-function: ease-in-out;
+}
+
+.Modal_view_default.Modal_visible .Modal-Overlay,
+.Modal_view_default.Modal_visible .Modal-Wrapper {
+	visibility: visible;
+	margin: 0;
+}
+
+.Modal_view_default.Modal_hasAnimation .Modal-Overlay,
+.Modal_view_default.Modal_hasAnimation .Modal-Wrapper {
+	animation-name: Modal_view_default;
+}
+
+.Modal_view_default.Modal_hasAnimation .Modal-Content {
+	animation-name: Modal-Content_theme_normal;
+}
+
+.Modal_view_default.Modal_visible.Modal_hasAnimation .Modal-Overlay,
+.Modal_view_default.Modal_visible.Modal_hasAnimation .Modal-Wrapper {
+	animation-name: Modal_view_default_visible;
+}
+
+.Modal_view_default.Modal_visible.Modal_hasAnimation .Modal-Content {
+	animation-name: Modal-Content_theme_normal_visible;
+}
+
+@keyframes Modal_view_default {
+	0% {
+		visibility: visible;
+		margin: 0;
+		opacity: 1;
+	}
+
+	99% {
+		margin: 0;
+	}
+
+	100% {
+		visibility: hidden;
+		margin: -9999px 0 0 -9999px;
+		opacity: 0;
+	}
+}
+
+@keyframes Modal_view_default_visible {
+	0% {
+		opacity: 0;
+	}
+
+	100% {
+		opacity: 1;
+	}
+}
+
+@keyframes Modal-Content_theme_normal {
+	0% {
+		transform: scale(1);
+	}
+
+	100% {
+		transform: scale(1.5);
+	}
+}
+
+@keyframes Modal-Content_theme_normal_visible {
+	0% {
+		transform: scale(0.75);
+	}
+
+	100% {
+		transform: scale(1);
+	}
+}
+
+.Modal-Table {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	box-sizing: border-box;
+	flex-wrap: wrap;
+}
+
+.Modal-Cell {
+	max-width: 100%;
+	padding: var(--modal-size-m-content-indent);
+	box-sizing: border-box;
+}
+
+.Modal-Content.Modal-Content {
+	max-width: 100%;
+	margin: 0;
+}
+
+.Theme_root_default {
+	--typography-controls-font-family: arial, helvetica, sans-serif;
+	--typography-controls-outline-width: 2px;
+	--typography-controls-font-size-s: 14.4px;
+	--typography-controls-font-size-m: 16px;
+	--typography-controls-font-size-l: 19.2px;
+	--typography-controls-line-height-s: 120%;
+	--typography-controls-line-height-m: 150%;
+	--typography-controls-line-height-l: 200%;
+	--typography-controls-line-height-xl: 250%;
+	--typography-controls-indent-xs: 1.6px;
+	--typography-controls-indent-s: 3.2px;
+	--typography-controls-indent-m: 6.4px; /* Base indent size */
+	--typography-controls-indent-l: 9.6px;
+	--typography-controls-indent-xl: 12.8px;
+	--typography-controls-border-radius: 4px;
+	--typography-controls-border-width-s: 1px;
+	--typography-controls-border-width-m: 2px;
+	--typography-controls-border-width-l: 3px;
+	--typography-controls-icon-size-xs: 18px;
+	--typography-controls-icon-size-s: 20px;
+	--typography-controls-icon-size-m: 24px;
+	--typography-controls-icon-size-l: 28px;
+	--typography-controls-icon-size-xl: 32px;
+	--typography-controls-size-s-font-size: 14.4px;
+	--typography-controls-size-s-line-height: 16px;
+	--typography-controls-size-s-indent-inner: 6.4px;
+	--typography-controls-size-m-font-size: 16px;
+	--typography-controls-size-m-line-height: 17.6px;
+	--typography-controls-size-m-indent-inner: 8px;
+	--typography-controls-size-l-font-size: 19.2px;
+	--typography-controls-size-l-line-height: 19.2px;
+	--typography-controls-size-l-indent-inner: 9.6px;
+	--typography-font-family: arial, helvetica, sans-serif;
+	--typography-layout-indent-s-all: 4.8px;
+	--typography-layout-indent-m-all: 8px;
+	--typography-layout-indent-l-all: 16px;
+	--typography-layout-border-radius: 4px;
+	--typography-layout-border-width-s: 1px;
+	--typography-layout-border-width-m: 2px;
+	--typography-layout-size-s-font-size: 14.4px;
+	--typography-layout-size-s-line-height: 16px;
+	--typography-layout-size-s-indent-inner: 6.4px;
+	--typography-layout-size-m-font-size: 16px;
+	--typography-layout-size-m-line-height: 17.6px;
+	--typography-layout-size-m-indent-inner: 8px;
+	--typography-layout-size-l-font-size: 19.2px;
+	--typography-layout-size-l-line-height: 19.2px;
+	--typography-layout-size-l-indent-inner: 9.6px;
+	--transition-controls-action-toggle-size-s: 100ms;
+	--transition-controls-action-toggle-size-m: 250ms;
+	--transition-controls-action-press-size-s: 100ms;
+	--transition-controls-action-hover-size-s-in: 150ms;
+	--transition-controls-action-hover-size-s-out: 100ms;
+	--transition-controls-action-hover-size-m-in: 250ms;
+	--transition-controls-action-hover-size-m-out: 200ms;
+	--transition-controls-action-hover-size-l-in: 300ms;
+	--transition-controls-action-hover-size-l-out: 250ms;
+	--transition-controls-action-spin-size-m-duration: 700ms;
+	--transition-controls-action-spin-size-m-delay: 200ms;
+	--button-transition-hover: 150ms;
+	--button-transition-press: 100ms;
+	--button-font-family: arial, helvetica, sans-serif;
+	--button-outline-width: 2px;
+	--button-border-width: 1px;
+	--button-border-radius: 4px;
+	--button-size-s-font-size: 14.4px;
+	--button-size-s-line-height: 200%;
+	--button-size-s-indent-inner: 3.2px;
+	--button-size-s-indent-outer: 6.4px;
+	--button-size-s-indent-content: 1.6px;
+	--button-size-m-font-size: 16px;
+	--button-size-m-line-height: 200%;
+	--button-size-m-indent-inner: 6.4px;
+	--button-size-m-indent-outer: 9.6px;
+	--button-size-m-indent-content: 1.6px;
+	--button-size-l-font-size: 19.2px;
+	--button-size-l-line-height: 200%;
+	--button-size-l-indent-inner: 6.4px;
+	--button-size-l-indent-outer: 12.8px;
+	--button-size-l-indent-content: 1.6px;
+	--checkbox-transition-hover: 150ms;
+	--checkbox-transition-toggle: 100ms;
+	--checkbox-outline-width: 2px;
+	--checkbox-border-radius: 4px;
+	--checkbox-box-size-s: calc(16px);
+	--checkbox-box-size-m: calc(19.2px - 1px);
+	--checkbox-icon-padding-m: 3.2px;
+	--checkbox-label-indent-m: 3.2px;
+	--checkbox-label-font-size-s: calc(14.4px);
+	--checkbox-label-font-size-m: calc(16px);
+	--icon-size-xs: 18px;
+	--icon-size-s: 20px;
+	--icon-size-m: 24px;
+	--icon-size-l: 28px;
+	--icon-size-xl: 32px;
+	--menu-font-family: arial, helvetica, sans-serif;
+	--menu-border-radius: 4px;
+	--menu-indent-m: 6.4px;
+	--menu-size-s-font-size: 14.4px;
+	--menu-size-m-font-size: 16px;
+	--menu-size-m-container-indent: 3.2px;
+	--menu-size-m-item-line-height: 250%;
+	--menu-size-m-item-indent: 12.8px;
+	--menu-size-m-title-line-height: 200%;
+	--menu-size-m-title-indent: 12.8px;
+	--menu-size-l-font-size: 19.2px;
+	--menu-view-default-group-border-width: 1px;
+	--menu-view-action-group-border-width: 1px;
+	--modal-size-m-content-indent: 6.4px;
+	--modal-view-default-border-radius: 4px;
+	--popup-border-radius: 4px;
+	--select-border-radius: 4px;
+	--spinner-size-s: 20px;
+	--spinner-size-m: 24px;
+	--spinner-size-l: 28px;
+	--spinner-animation-duration: 700ms;
+	--spinner-animation-delay: 200ms;
+	--spinner-view-primitive-border-width: 3px;
+	--spinner-view-icon-fill-color: currentcolor;
+	--tabsmenu-transition-hover: 150ms;
+	--tabsmenu-transition-toggle: 100ms;
+	--tabsmenu-transition-motion: 250ms;
+	--tabsmenu-font-family: arial, helvetica, sans-serif;
+	--tabsmenu-outline-width: 2px;
+	--tabsmenu-indent-inner-m: 6.4px;
+	--tabsmenu-indent-gap-s: 3.2px;
+	--tabsmenu-indent-gap-m: 6.4px;
+	--tabsmenu-size-s-font-size: 14.4px;
+	--tabsmenu-size-s-line-height: 200%;
+	--tabsmenu-size-m-font-size: 16px;
+	--tabsmenu-size-m-line-height: 200%;
+	--tabsmenu-view-default-border-width: 2px;
+	--tabsmenu-view-default-border-radius: 4px;
+	--tabsmenu-view-primitive-border-width: 2px;
+	--textarea-transition-hover: 150ms;
+	--textarea-border-width: 2px;
+	--textarea-border-radius: 4px;
+	--textarea-font-family: arial, helvetica, sans-serif;
+	--textarea-size-s-font-size: 14.4px;
+	--textarea-size-s-line-height: 120%;
+	--textarea-size-s-control-indent: 6.4px;
+	--textarea-size-s-hint-font-size: 14.4px;
+	--textarea-size-s-hint-indent: 3.2px;
+	--textarea-size-m-font-size: 16px;
+	--textarea-size-m-line-height: 120%;
+	--textarea-size-m-control-indent: 6.4px;
+	--textarea-size-m-clear-indent: 1.6px;
+	--textarea-size-m-clear-size: 24px;
+	--textarea-size-m-hint-font-size: 14.4px;
+	--textarea-size-m-hint-indent: 3.2px;
+	--textinput-transition-hover: 150ms;
+	--textinput-border-width: 2px;
+	--textinput-border-radius: 4px;
+	--textinput-font-family: arial, helvetica, sans-serif;
+	--textinput-size-s-font-size: 14.4px;
+	--textinput-size-s-line-height: 120%;
+	--textinput-size-s-control-indent: 6.4px;
+	--textinput-size-s-hint-font-size: 14.4px;
+	--textinput-size-s-hint-indent: 3.2px;
+	--textinput-size-m-font-size: 16px;
+	--textinput-size-m-line-height: 120%;
+	--textinput-size-m-control-indent: 6.4px;
+	--textinput-size-m-hint-font-size: 14.4px;
+	--textinput-size-m-hint-indent: 3.2px;
+	--textinput-size-m-clear-indent: 3.2px;
+}
+
+.Theme_color_default {
+	--color-base: #000; /* base content color on which depend color of text, icons, etc */
+	--color-essential: #fff; /* background color */
+	--color-project: #1f69ff; /* project color for accents such as a action view */
+	--color-phantom: #000; /* toning color on which depend borders, translucent typography, etc */
+	--color-path: #04b; /* base color for link */
+	--color-success: #00985f;
+	--color-alert: #f33; /* error color affecting to background and typography */
+	--color-warning: #f90;
+	--color-fill-color-inverse: #000;
+	--color-fill-color-overlay: rgb(0 0 0 / 30%);
+	--color-fill-color-action: rgb(107 156 255);
+	--color-fill-color-selection: rgb(189 212 255);
+	--color-fill-color-hover: rgb(0 0 0 / 15%);
+	--color-fill-color-border: rgb(0 0 0 / 5%);
+	--color-fill-color-outline: #d518da;
+	--color-fill-color-stripe: rgb(0 0 0 / 4%);
+	--color-fill-color-ghost: rgb(0 0 0 / 8%);
+	--color-fill-color-default: #fff;
+	--color-fill-color-tone: rgb(0 0 0 / 90%);
+	--color-fill-color-soft: rgb(255 255 255 / 97%);
+	--color-fill-color-success: #00985f;
+	--color-fill-color-alert: #f33;
+	--color-fill-color-warning: #f90;
+	--color-fill-color-link: rgb(21 126 239 / 40%);
+	--color-typo-primary: #000; /* Primary color for all text */
+	--color-typo-inverse: #fff; /* contrast to primary color */
+	--color-typo-secondary: #535353; /* Used for descriptions */
+	--color-typo-ghost: rgb(0 0 0 / 30%); /* color of the additional text */
+	--color-typo-disabled: rgb(
+		0 0 0 / 30%
+	); /* color of the main text of disabled control */
+
+	--color-typo-success: #00985f;
+	--color-typo-warning: #f90;
+	--color-typo-alert: #c00101;
+	--color-link-base: #04b;
+	--color-link-external: #04b;
+	--color-link-minor: rgb(102 102 153);
+	--color-link-hover: #c00;
+	--color-control-border-color-focus: rgb(179 179 179);
+	--color-control-border-color-prism: #d518da; /* border color for special focus such as keyboard focus */
+	--color-control-border-color-shadow: rgb(153 153 153 / 10%);
+	--color-control-border-color-alert-base: rgb(224 0 0);
+	--color-control-border-color-alert-hover: rgb(255 20 20);
+	--color-control-border-color-alert-focus: rgb(255 82 82);
+	--color-control-typo-primary: #000;
+	--color-control-typo-secondary: rgb(0 0 0 / 60%);
+	--color-control-typo-ghost: rgb(0 0 0 / 30%);
+	--color-control-typo-passive: #000;
+	--color-control-typo-faint: rgb(255 255 255);
+	--color-control-typo-disabled: rgb(128 128 128);
+	--color-control-typo-link: #04b;
+	--color-control-typo-alert: rgb(224 0 0);
+	--color-control-type-default-fill-color-base: rgb(230 230 230);
+	--color-control-type-default-fill-color-hover: rgb(217 217 217);
+	--color-control-type-default-fill-color-disabled: rgb(242 242 242);
+	--color-control-type-default-border-color-base: rgb(179 179 179);
+	--color-control-type-default-border-color-hover: rgb(217 217 217);
+	--color-control-type-default-border-color-disabled: rgb(232 232 232);
+	--color-control-type-default-typo-base: #000;
+	--color-control-type-default-typo-disabled: rgb(128 128 128);
+	--color-control-type-action-fill-color-base: #1f69ff;
+	--color-control-type-action-fill-color-hover: rgb(71 133 255);
+	--color-control-type-action-fill-color-disabled: rgb(179 204 255);
+	--color-control-type-action-border-color-prism: #d518da;
+	--color-control-type-action-typo-base: #fff;
+	--color-control-type-action-typo-hover: #fff;
+	--color-control-type-action-typo-disabled: #fff;
+	--color-control-type-input-fill-color-base: #fff;
+	--color-control-type-input-fill-color-disabled: rgb(242 242 242);
+	--color-control-type-input-border-color-base: rgb(217 217 217);
+	--color-control-type-input-border-color-hover: rgb(204 204 204);
+	--color-control-type-input-border-color-focus: rgb(179 179 179);
+	--color-control-type-input-border-color-disabled: rgb(242 242 242);
+	--color-control-type-input-typo-base: #000;
+	--color-control-type-input-typo-disabled: rgb(128 128 128);
+	--color-control-type-pseudo-fill-color-base: rgb(255 255 255);
+	--color-control-type-pseudo-fill-color-hover: rgb(247 247 247);
+	--color-control-type-pseudo-border-color-base: rgb(204 204 204);
+	--color-control-type-passive-fill-color-base: #fff;
+	--color-control-type-blank-fill-color-base: #fff;
+	--color-control-type-blank-fill-color-hover: #fff;
+	--color-control-type-blank-fill-color-disabled: rgb(242 242 242);
+	--color-control-type-blank-border-color-base: rgb(217 217 217);
+	--color-control-type-blank-border-color-hover: rgb(204 204 204);
+	--color-control-type-blank-border-color-disabled: rgb(242 242 242);
+	--color-control-type-faint-fill-color-base: #fff;
+	--color-control-type-faint-fill-color-disabled: rgb(199 199 199);
+	--color-control-type-link-fill-color-base: #04b;
+	--color-control-type-link-fill-color-hover: rgb(0 68 187 / 30%);
+	--color-control-type-link-border-color-base: rgb(0 68 187 / 60%);
+	--color-control-type-link-border-color-hover: rgb(0 68 187 / 60%);
+	--button-view-default-outline-color: #d518da;
+	--button-view-default-fill-color-base: rgb(230 230 230);
+	--button-view-default-fill-color-disabled: rgb(242 242 242);
+	--button-view-default-fill-color-hovered: rgb(217 217 217);
+	--button-view-default-typo-color-base: #000;
+	--button-view-default-typo-color-disabled: rgb(128 128 128);
+	--button-view-action-outline-color: #d518da;
+	--button-view-action-fill-color-base: #1f69ff;
+	--button-view-action-fill-color-disabled: rgb(179 204 255);
+	--button-view-action-fill-color-hovered: rgb(71 133 255);
+	--button-view-action-typo-color-base: #fff;
+	--button-view-action-typo-color-disabled: #fff;
+	--button-view-action-typo-color-hovered: #fff;
+	--button-view-clear-outline-color: #d518da;
+	--button-view-clear-fill-color-disabled: rgb(242 242 242);
+	--button-view-clear-typo-color-base: #000;
+	--button-view-clear-typo-color-disabled: rgb(128 128 128);
+	--button-view-pseudo-outline-color: #d518da;
+	--button-view-pseudo-border-color-base: rgb(204 204 204);
+	--button-view-pseudo-fill-color-base: rgb(255 255 255);
+	--button-view-pseudo-fill-color-disabled: rgb(242 242 242);
+	--button-view-pseudo-fill-color-hovered: rgb(247 247 247);
+	--button-view-pseudo-typo-color-base: #000;
+	--button-view-pseudo-typo-color-disabled: rgb(128 128 128);
+	--button-view-link-outline-color: #d518da;
+	--button-view-link-typo-color-base: #04b;
+	--button-view-link-typo-color-disabled: rgb(128 128 128);
+	--checkbox-outline-color: #d518da;
+	--checkbox-box-fill-color-base: rgb(230 230 230);
+	--checkbox-box-fill-color-hover: rgb(217 217 217);
+	--checkbox-box-fill-color-disabled: rgb(242 242 242);
+	--checkbox-box-checked-fill-color-base: #1f69ff;
+	--checkbox-box-checked-fill-color-hover: rgb(71 133 255);
+	--checkbox-box-checked-fill-color-disabled: rgb(179 204 255);
+	--checkbox-box-checked-outline-color: #d518da;
+	--checkbox-icon-fill-color-base: #fff;
+	--checkbox-icon-fill-color-disabled: #fff;
+	--checkbox-label-typo-base: #000;
+	--checkbox-label-typo-disabled: rgb(128 128 128);
+	--menu-view-default-fill-color-base: rgb(230 230 230);
+	--menu-view-default-fill-color-disabled: rgb(242 242 242);
+	--menu-view-default-group-border-color-base: rgb(179 179 179);
+	--menu-view-default-title-typo-color-base: rgb(0 0 0 / 60%);
+	--menu-view-default-item-typo-color-base: #000;
+	--menu-view-default-item-typo-color-hover: #000;
+	--menu-view-default-item-typo-color-disabled: rgb(128 128 128);
+	--menu-view-default-item-fill-color-hover: rgb(217 217 217);
+	--menu-view-action-fill-color-base: rgb(230 230 230);
+	--menu-view-action-fill-color-disabled: rgb(242 242 242);
+	--menu-view-action-group-border-color-base: rgb(179 179 179);
+	--menu-view-action-title-typo-color-base: rgb(0 0 0 / 60%);
+	--menu-view-action-item-typo-color-base: #000;
+	--menu-view-action-item-typo-color-hover: #fff;
+	--menu-view-action-item-typo-color-disabled: rgb(128 128 128);
+	--menu-view-action-item-fill-color-hover: rgb(71 133 255);
+	--modal-view-default-fill-color: #fff;
+	--modal-view-default-overlay-fill-color: rgb(0 0 0 / 30%);
+	--popup-view-default-typo-color: #000;
+	--popup-view-default-fill-color: #fff;
+	--popup-view-default-border-color-shadow: rgb(153 153 153 / 10%);
+	--select-fill-color-base: rgb(230 230 230);
+	--spinner-view-primitive-border-color-active: #1f69ff;
+	--spinner-view-primitive-border-color-common: transparent;
+	--tabsmenu-view-default-outline-color: #d518da;
+	--tabsmenu-view-default-border-color-base: rgb(204 204 204);
+	--tabsmenu-view-default-border-color-active: rgb(71 133 255);
+	--tabsmenu-view-default-fill-color-base: rgb(255 255 255);
+	--tabsmenu-view-default-fill-color-hover: rgb(247 247 247);
+	--tabsmenu-view-default-fill-color-disabled: rgb(242 242 242);
+	--tabsmenu-view-default-typo-color-base: #000;
+	--tabsmenu-view-default-typo-color-disabled: rgb(128 128 128);
+	--tabsmenu-view-primitive-outline-color: #d518da;
+	--tabsmenu-view-primitive-border-color-base: #000;
+	--tabsmenu-view-primitive-typo-color-base: #000;
+	--tabsmenu-view-primitive-typo-color-disabled: rgb(128 128 128);
+	--textarea-view-default-fill-color-base: #fff;
+	--textarea-view-default-fill-color-disabled: rgb(242 242 242);
+	--textarea-view-default-border-color-base: rgb(217 217 217);
+	--textarea-view-default-border-color-hover: rgb(204 204 204);
+	--textarea-view-default-border-color-disabled: rgb(242 242 242);
+	--textarea-view-default-border-color-focus: rgb(179 179 179);
+	--textarea-view-default-border-color-error-base: rgb(224 0 0);
+	--textarea-view-default-border-color-error-hover: rgb(255 20 20);
+	--textarea-view-default-border-color-error-focus: rgb(255 82 82);
+	--textarea-view-default-typo-color-base: #000;
+	--textarea-view-default-typo-color-disabled: rgb(128 128 128);
+	--textarea-view-default-typo-color-error: rgb(224 0 0);
+	--textinput-view-default-fill-color-base: #fff;
+	--textinput-view-default-fill-color-disabled: rgb(242 242 242);
+	--textinput-view-default-border-color-base: rgb(217 217 217);
+	--textinput-view-default-border-color-hover: rgb(204 204 204);
+	--textinput-view-default-border-color-disabled: rgb(242 242 242);
+	--textinput-view-default-border-color-focus: rgb(179 179 179);
+	--textinput-view-default-border-color-error-base: rgb(224 0 0);
+	--textinput-view-default-border-color-error-hover: rgb(255 20 20);
+	--textinput-view-default-border-color-error-focus: rgb(255 82 82);
+	--textinput-view-default-typo-color-base: #000;
+	--textinput-view-default-typo-color-disabled: rgb(128 128 128);
+	--textinput-view-default-typo-color-error: rgb(224 0 0);
+	--toast-messages-message-type-info-fill-color: rgb(82 139 255);
+	--toast-messages-message-type-info-typo-color: #fff;
+	--toast-messages-message-type-error-fill-color: rgb(255 153 153);
+	--toast-messages-message-type-error-typo-color: #000;
+	--options-page-section-active-border-color: #1f69ff;
+	--options-page-dialog-fill-color: #f5f5f5;
+	--popup-window-header-fill-color: #f1f1f1;
+}
+
+.Button_mobile.Button_width_max .Button-Text {
+	text-align: center;
+	font-size: 1.1em;
+	padding: 0.1em;
+}
+
+.Loader {
+	position: relative;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.Loader-Image {
+	animation-name: loader-spin;
+	animation-duration: 0.8s;
+	animation-iteration-count: infinite;
+	animation-timing-function: linear;
+}
+
+@keyframes loader-spin {
+	from {
+		transform: rotate(0deg);
+	}
+
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.TextTranslator {
+	width: max-content;
+	max-width: 100%;
+	padding: var(--typography-layout-indent-l-all);
+	border-radius: var(--typography-layout-border-radius);
+	box-sizing: border-box;
+	font-family: var(--typography-font-family);
+	font-size: var(--typography-layout-size-s-font-size);
+	line-height: var(--typography-layout-size-m-line-height);
+	color: var(--color-typo-primary);
+	background: var(--text-translator-popup-fill-color);
+	border: 1px solid var(--color-control-type-blank-border-color-base);
+
+	/* Define styles explicit to avoid inherit of page styles. Yes, "reset all" is not work for all */
+	text-align: initial;
+	font-weight: normal;
+}
+
+.TextTranslator > *:not(:first-child) {
+	margin-top: var(--typography-layout-indent-m-all);
+}
+
+/* Button */
+.TextTranslator .Button {
+	outline: none !important;
+}
+
+/* Head */
+.TextTranslator-Head:not(.TextTranslator-Head_mobile) > *:not(:first-child) {
+	margin-left: var(--typography-layout-indent-m-all);
+}
+
+/* Container_direction */
+.TextTranslator-Container_direction_left {
+	float: left;
+}
+
+.TextTranslator-Container_direction_right {
+	float: right;
+}
+
+/* Clearfix */
+.TextTranslator-Clearfix::after {
+	display: block;
+	content: '';
+	clear: both;
+}
+
+/* Content */
+.TextTranslator-TextContainer {
+	display: flex;
+	border-radius: inherit;
+}
+
+.TextTranslator-TextContainer::after {
+	display: block;
+	content: '';
+	clear: both;
+}
+
+.TextTranslator-TextControls {
+	--button-size-m-indent-outer: 2px;
+
+	display: flex;
+	flex-direction: column;
+	gap: var(--typography-layout-indent-s-all);
+	float: left;
+	margin-right: var(--typography-layout-indent-s-all);
+}
+
+.TextTranslator-TextContainer_text_original {
+	background: #eee;
+	width: min-content;
+	min-width: 100%;
+	box-sizing: border-box;
+}
+
+.TextTranslator-OriginalText {
+	margin: var(--typography-controls-indent-m);
+	white-space: pre-wrap;
+	max-height: 400px;
+	overflow: auto;
+	scrollbar-width: thin;
+}
+
+.TextTranslator-Details > summary {
+	margin: 0 5px;
+}
+
+/* Body */
+.TextTranslator-Body {
+	width: 100%;
+	max-width: 600px;
+	max-height: 400px;
+	overflow-y: auto;
+	font-size: var(--typography-layout-size-s-font-size);
+	white-space: pre-line;
+	line-height: 19.2px;
+	scrollbar-width: thin;
+	padding-top: 4.8px;
+}
+
+.TextTranslator-Body_error {
+	color: var(--color-typo-error);
+}
+
+/* Loader */
+.TextTranslator-Loader {
+	padding: 4px;
+	border: 1px solid var(--color-control-type-blank-border-color-base);
+	border-radius: var(--typography-layout-border-radius);
+	color: var(--color-typo-primary);
+	background: var(--color-container-page-popup-fill-color);
+}
+
+.TextTranslator-Loader .Loader-Image {
+	width: 32px;
+	height: 32px;
+}
+
+.TextTranslator-MobileHead {
+	margin-bottom: var(--typography-layout-indent-m-all);
+	width: 100%;
+	text-align: right;
+}
+
+/* Make wrapper position absolute, to firefox do not prevent a focus reset */
+.TextTranslatorPopup:not(.TextTranslatorPopup_mobile) {
+	position: absolute;
+}
+
+.TextTranslatorPopup {
+	pointer-events: all;
+}
+
+/* TranslateButton */
+.TextTranslatorPopup-TranslateButton {
+	display: block;
+	opacity: 0.7;
+	width: 24px;
+	height: 24px;
+}
+
+.TextTranslatorPopup-TranslateButton:hover {
+	opacity: 1;
+}
+
+/* Mobile overrides */
+.TextTranslatorPopup_mobile .Modal-Table {
+	max-width: 100%;
+}
+
+.TextTranslatorPopup_mobile .Modal-Content {
+	display: block;
+}
+
+

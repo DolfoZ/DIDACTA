@@ -1,0 +1,301 @@
+ARES LOGIST MCP SERVER
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+================================================================================
+ARES LOGISTICS & OPERATIONS MCP SERVER v1.0
+================================================================================
+Gestiona la construcción y operación del sistema logístico de artillería basado en PostgreSQL.
+Incluye: CRUD de batallones/personal/activos, control de inventario, gestión de misiones,
+validación táctica y protocolos de seguridad. Todo en un solo despliegue.
+
+Dependencias: pip install mcp psycopg2-binary
+Ejecución: python ares_logistics_mcp.py
+"""
+
+import os
+import json
+import logging
+import sys
+from typing import List, Optional, Dict, Any
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from psycopg2 import sql, OperationalError
+from mcp.server.fastmcp import FastMCP
+
+# ============================================================================
+# CONFIGURACIÓN & LOGGING
+# ============================================================================
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "ares_artilleria")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASS = os.getenv("DB_PASS", "secure_password")
+DATABASE_URL = f"host={DB_HOST} port={DB_PORT} dbname={DB_NAME} user={DB_USER} password={DB_PASS}"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("ARES_LOGISTICS_MCP")
+
+mcp = FastMCP("ARES-Artillery-Logistics-System")
+
+# ============================================================================
+# UTILIDADES DE BASE DE DATOS
+# ============================================================================
+def get_db():
+    """Retorna conexión segura con cursor de diccionarios."""
+    try:
+        conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        conn.autocommit = True
+        return conn
+    except OperationalError as e:
+        logger.error(f"❌ Error de conexión DB: {e}")
+        raise ConnectionError("No se puede conectar a PostgreSQL. Verifique credenciales.")
+
+def ejecutar_consulta(query: str, params: tuple = None) -> List[Dict]:
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, params)
+            if cur.description:
+                return [dict(row) for row in cur.fetchall()]
+            return []
+
+# ============================================================================
+# RECURSOS MCP (Documentación & Esquema)
+# ============================================================================
+@mcp.resource("ares://db/schema")
+def get_schema() -> str:
+    """Esquema SQL completo del sistema logístico de artillería."""
+    return """
+    -- Batallones: id, nombre, ubicacion, municipio, departamento, comandante_id, fecha_creacion
+    -- Personal: id, batallon_id, nombre, grado, rol, estado, especialidad
+    -- Obuses: id, batallon_id, modelo, calibre_mm, numero_serie, estado, ultima_revision, proxima_revision
+    -- Municiones: id, batallon_id, tipo, calibre_mm, designacion, cantidad_actual, cantidad_minima, lote, ubicacion_almacen
+    -- Cargas Propulsoras: id, batallon_id, tipo, calibre_mm, zona, cantidad, temperatura_almacenamiento
+    -- Vehículos: id, batallon_id, tipo, modelo, matricula, estado, kilometraje, ultimo_mantenimiento
+    -- Misiones de Fuego: id, batallon_id, obus_id, solicitante, objetivo_grid, tipo_municion, cantidad_rondas, estado, fechas, resultado
+    """
+
+@mcp.resource("ares://docs/operational-protocols")
+def get_protocols() -> str:
+    """Protocolos tácticos y logísticos oficiales."""
+    return """
+    1. VALIDACIÓN PRE-MISIÓN: Verificar stock >= cantidad_rondas + 20% margen.
+    2. ESTADO DE PIEZAS: Solo obuses 'operativo' pueden asignarse a misiones.
+    3. CADENA DE MANDO: Las misiones requieren solicitante validado y aprobación implícita en estado 'aprobada'.
+    4. INVENTARIO: Actualizar stock inmediatamente tras ejecución. Alertar si cantidad_actual <= cantidad_minima.
+    5. SEGURIDAD: No permitir misiones si temperatura_almacenamiento de cargas excede 35°C.
+    """
+
+# ============================================================================
+# HERRAMIENTAS MCP (Construcción & Operación)
+# ============================================================================
+
+# --- 1. ADMINISTRACIÓN DE BATALLONES ---
+@mcp.tool()
+def list_battalions(departamento: Optional[str] = None) -> List[Dict]:
+    """Lista batallones filtrados por departamento (opcional)."""
+    q = "SELECT * FROM batallones"
+    p = ()
+    if departamento:
+        q += " WHERE departamento = %s"
+        p = (departamento,)
+    return ejecutar_consulta(q, p)
+
+@mcp.tool()
+def create_battalion(nombre: str, ubicacion: str, municipio: str, departamento: str) -> Dict:
+    """Registra un nuevo batallón de artillería de campaña."""
+    q = """INSERT INTO batallones (nombre, ubicacion, municipio, departamento) 
+           VALUES (%s, %s, %s, %s) RETURNING id, nombre, ubicacion"""
+    return ejecutar_consulta(q, (nombre, ubicacion, municipio, departamento))[0]
+
+# --- 2. GESTIÓN DE PERSONAL ---
+@mcp.tool()
+def list_personnel(batallon_id: int, rol: Optional[str] = None) -> List[Dict]:
+    """Lista personal activo de un batallón, opcionalmente filtrado por rol."""
+    q = "SELECT * FROM personal WHERE batallon_id = %s AND estado = 'activo'"
+    p = [batallon_id]
+    if rol:
+        q += " AND rol = %s"
+        p.append(rol)
+    return ejecutar_consulta(q, tuple(p))
+
+@mcp.tool()
+def assign_personnel(batallon_id: int, nombre: str, grado: str, rol: str, especialidad: Optional[str] = None) -> Dict:
+    """Asigna personal a un batallón con rol específico."""
+    roles_validos = ["Comandante", "OficialEnlace", "JefePieza", "Conductor", "Artillero", "Logistica"]
+    if rol not in roles_validos:
+        raise ValueError(f"Rol inválido. Use: {roles_validos}")
+    q = """INSERT INTO personal (batallon_id, nombre, grado, rol, especialidad) 
+           VALUES (%s, %s, %s, %s, %s) RETURNING id, nombre, rol"""
+    return ejecutar_consulta(q, (batallon_id, nombre, grado, rol, especialidad))[0]
+
+# --- 3. ACTIVOS & PIEZAS DE ARTILLERÍA ---
+@mcp.tool()
+def list_artillery(batallon_id: int, estado: Optional[str] = None) -> List[Dict]:
+    """Lista obuses de un batallón con su estado operativo."""
+    q = "SELECT * FROM obuses WHERE batallon_id = %s"
+    p = [batallon_id]
+    if estado:
+        q += " AND estado = %s"
+        p.append(estado)
+    return ejecutar_consulta(q, tuple(p))
+
+@mcp.tool()
+def update_artillery_status(obus_id: int, nuevo_estado: str, motivo: str = "") -> Dict:
+    """Actualiza estado de un obús y registra motivo."""
+    estados = ["operativo", "mantenimiento", "fuera_servicio"]
+    if nuevo_estado not in estados:
+        raise ValueError(f"Estado inválido: {estados}")
+    q = """UPDATE obuses SET estado = %s, ultima_revision = CURRENT_DATE WHERE id = %s RETURNING id, estado"""
+    return ejecutar_consulta(q, (nuevo_estado, obus_id))[0]
+
+# --- 4. CONTROL DE INVENTARIO (MUNICIONES & CARGAS) ---
+@mcp.tool()
+def check_inventory(batallon_id: int, calibre_mm: int) -> Dict:
+    """Verifica stock actual de municiones y cargas para un calibre específico."""
+    q_mun = """SELECT tipo, designacion, cantidad_actual, cantidad_minima, lote 
+               FROM municiones WHERE batallon_id = %s AND calibre_mm = %s"""
+    q_car = """SELECT tipo, zona, cantidad, temperatura_almacenamiento 
+               FROM cargas_propulsoras WHERE batallon_id = %s AND calibre_mm = %s"""
+    municiones = ejecutar_consulta(q_mun, (batallon_id, calibre_mm))
+    cargas = ejecutar_consulta(q_car, (batallon_id, calibre_mm))
+    
+    alertas = []
+    for m in municiones:
+        if m["cantidad_actual"] <= m["cantidad_minima"]:
+            alertas.append(f"⚠️ MUNICIÓN CRÍTICA: {m['designacion']} ({m['cantidad_actual']} uds)")
+    for c in cargas:
+        if c["cantidad"] <= 10:
+            alertas.append(f"⚠️ CARGAS BAJAS: Zona {c['zona']} ({c['cantidad']} uds)")
+        if c["temperatura_almacenamiento"] and c["temperatura_almacenamiento"] > 35.0:
+            alertas.append(f"🔥 TEMPERATURA CARGAS ZONA {c['zona']}: {c['temperatura_almacenamiento']}°C (RIESGO)")
+            
+    return {"batallon_id": batallon_id, "calibre_mm": calibre_mm, "municiones": municiones, "cargas": cargas, "alertas": alertas}
+
+@mcp.tool()
+def adjust_inventory(tabla: str, id_registro: int, cantidad: int, operacion: str) -> Dict:
+    """Ajusta inventario de municiones o cargas. operacion: 'add' o 'sub'."""
+    if tabla not in ["municiones", "cargas_propulsoras"]:
+        raise ValueError("Tabla inválida. Use: municiones o cargas_propulsoras")
+    if operacion not in ["add", "sub"]:
+        raise ValueError("Operación inválida. Use: add o sub")
+    
+    signo = 1 if operacion == "add" else -1
+    q = f"""UPDATE {tabla} SET cantidad = cantidad + (%s * %s) WHERE id = %s RETURNING id, cantidad"""
+    return ejecutar_consulta(q, (signo, cantidad, id_registro))[0]
+
+# --- 5. GESTIÓN DE MISIONES DE FUEGO ---
+@mcp.tool()
+def create_fire_mission(batallon_id: int, obus_id: int, solicitante: str, objetivo_grid: str, 
+                        tipo_municion: str, cantidad_rondas: int) -> Dict:
+    """Crea una misión de fuego pendiente. Requiere validación previa de logística."""
+    # Validación rápida de estado del obús
+    obus = ejecutar_consulta("SELECT estado, calibre_mm FROM obuses WHERE id = %s", (obus_id,))
+    if not obus or obus[0]["estado"] != "operativo":
+        raise ValueError("El obús no está operativo o no existe.")
+        
+    q = """INSERT INTO misiones_fuego (batallon_id, obus_id, solicitante, objetivo_grid, tipo_municion, cantidad_rondas, estado) 
+           VALUES (%s, %s, %s, %s, %s, %s, 'pendiente') RETURNING id, estado, fecha_solicitud"""
+    return ejecutar_consulta(q, (batallon_id, obus_id, solicitante, objetivo_grid, tipo_municion, cantidad_rondas))[0]
+
+@mcp.tool()
+def update_mission_status(mision_id: int, nuevo_estado: str, resultado: str = "") -> Dict:
+    """Actualiza estado de misión y registra resultado operativo."""
+    estados_validos = ["pendiente", "aprobada", "ejecutando", "completada", "rechazada"]
+    if nuevo_estado not in estados_validos:
+        raise ValueError(f"Estado inválido: {estados_validos}")
+        
+    q = """UPDATE misiones_fuego SET estado = %s, resultado = %s, 
+           fecha_ejecucion = CASE WHEN %s = 'completada' THEN NOW() ELSE fecha_ejecucion END 
+           WHERE id = %s RETURNING id, estado, resultado"""
+    return ejecutar_consulta(q, (nuevo_estado, resultado, nuevo_estado, mision_id))[0]
+
+# --- 6. VALIDACIÓN TÁCTICA & ANALÍTICA ---
+@mcp.tool()
+def validate_mission_feasibility(batallon_id: int, tipo_municion: str, cantidad_rondas: int, calibre_mm: int) -> Dict:
+    """Valida si una misión es logísticamente viable antes de aprobación."""
+    inventario = check_inventory(batallon_id, calibre_mm)
+    municion_obj = next((m for m in inventario["municiones"] if m["designacion"] == tipo_municion or m["tipo"] == tipo_municion), None)
+    
+    if not municion_obj:
+        return {"viable": False, "razon": f"Munición {tipo_municion} no encontrada en inventario."}
+    if municion_obj["cantidad_actual"] < cantidad_rondas:
+        return {"viable": False, "razon": f"Stock insuficiente. Requerido: {cantidad_rondas}, Disponible: {municion_obj['cantidad_actual']}"}
+    if inventario["alertas"]:
+        return {"viable": True, "condicional": True, "razon": "Viable pero con alertas logísticas.", "alertas": inventario["alertas"]}
+    return {"viable": True, "condicional": False, "razon": "Logística aprobada. Proceder."}
+
+@mcp.tool()
+def generate_battalion_report(batallon_id: int) -> Dict:
+    """Genera reporte consolidado de estado operativo del batallón."""
+    personal = len(ejecutar_consulta("SELECT id FROM personal WHERE batallon_id=%s AND estado='activo'", (batallon_id,)))
+    obuses_op = len(ejecutar_consulta("SELECT id FROM obuses WHERE batallon_id=%s AND estado='operativo'", (batallon_id,)))
+    misiones_pend = len(ejecutar_consulta("SELECT id FROM misiones_fuego WHERE batallon_id=%s AND estado='pendiente'", (batallon_id,)))
+    return {"batallon_id": batallon_id, "personal_activo": personal, "obuses_operativos": obuses_op, "misiones_pendientes": misiones_pend}
+
+# ============================================================================
+# PROMPTS MCP (Flujos de Trabajo Guiados)
+# ============================================================================
+@mcp.prompt()
+def setup_new_battalion() -> str:
+    """Guía paso a paso para desplegar un nuevo batallón en el sistema."""
+    return """
+    1. Usa `create_battalion` con nombre, ubicación y departamento.
+    2. Asigna comandante con `assign_personnel` (rol: Comandante).
+    3. Registra obuses con `insert` directo o herramienta de activos (modelo, calibre, serie).
+    4. Carga inventario inicial con `adjust_inventory` para municiones y cargas.
+    5. Verifica estado con `generate_battalion_report`.
+    """
+
+@mcp.prompt()
+def execute_fire_mission_workflow() -> str:
+    """Flujo seguro para solicitar, validar y ejecutar una misión de fuego."""
+    return """
+    1. Identifica batallón y obús operativo (`list_artillery`).
+    2. Valida logística: `validate_mission_feasibility(batallon_id, tipo_municion, rondas, calibre)`.
+    3. Si viable, crea misión: `create_fire_mission(...)`.
+    4. Cambia estado a 'aprobada' → 'ejecutando' → 'completada' con `update_mission_status`.
+    5. Al completar, ajusta inventario: `adjust_inventory(tabla='municiones', ..., operacion='sub', cantidad=rondas)`.
+    6. Registra resultado y cierra ciclo.
+    """
+
+# ============================================================================
+# INICIALIZACIÓN & ARRANQUE
+# ============================================================================
+@mcp.tool()
+def initialize_database() -> str:
+    """Crea las tablas y datos semilla si no existen. Idempotente."""
+    schema_sql = """
+    CREATE TABLE IF NOT EXISTS batallones (id SERIAL PRIMARY KEY, nombre VARCHAR(100) NOT NULL, ubicacion VARCHAR(200) NOT NULL, municipio VARCHAR(100), departamento VARCHAR(100), comandante_id INTEGER, fecha_creacion DATE DEFAULT CURRENT_DATE);
+    CREATE TABLE IF NOT EXISTS personal (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), nombre VARCHAR(100) NOT NULL, grado VARCHAR(50) NOT NULL, rol VARCHAR(50) NOT NULL, estado VARCHAR(20) DEFAULT 'activo', especialidad VARCHAR(100));
+    CREATE TABLE IF NOT EXISTS obuses (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), modelo VARCHAR(50) NOT NULL, calibre_mm INTEGER NOT NULL, numero_serie VARCHAR(50) UNIQUE, estado VARCHAR(30) DEFAULT 'operativo', ultima_revision DATE, proxima_revision DATE);
+    CREATE TABLE IF NOT EXISTS municiones (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), tipo VARCHAR(50) NOT NULL, calibre_mm INTEGER NOT NULL, designacion VARCHAR(100), cantidad_actual INTEGER DEFAULT 0, cantidad_minima INTEGER DEFAULT 0, lote VARCHAR(50), ubicacion_almacen VARCHAR(100));
+    CREATE TABLE IF NOT EXISTS cargas_propulsoras (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), tipo VARCHAR(50) NOT NULL, calibre_mm INTEGER NOT NULL, zona INTEGER NOT NULL, cantidad INTEGER DEFAULT 0, temperatura_almacenamiento NUMERIC(4,1));
+    CREATE TABLE IF NOT EXISTS vehiculos (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), tipo VARCHAR(50) NOT NULL, modelo VARCHAR(50), matricula VARCHAR(50) UNIQUE, estado VARCHAR(30) DEFAULT 'operativo', kilometraje INTEGER DEFAULT 0, ultimo_mantenimiento DATE);
+    CREATE TABLE IF NOT EXISTS misiones_fuego (id SERIAL PRIMARY KEY, batallon_id INTEGER REFERENCES batallones(id), obus_id INTEGER REFERENCES obuses(id), solicitante VARCHAR(100), objetivo_grid VARCHAR(50), tipo_municion VARCHAR(50), cantidad_rondas INTEGER, estado VARCHAR(30) DEFAULT 'pendiente', fecha_solicitud TIMESTAMP DEFAULT NOW(), fecha_ejecucion TIMESTAMP, resultado VARCHAR(200));
+    
+    -- Datos semilla idempotentes
+    INSERT INTO batallones (nombre, ubicacion, municipio, departamento) VALUES 
+    ('1er Batallón de Artillería de Campaña', 'Zambrano', 'Zambrano', 'Francisco Morazán'),
+    ('2do Batallón de Artillería de Campaña', 'Pinalejo', 'Pinalejo', 'Santa Bárbara'),
+    ('4to Batallón de Artillería de Campaña', 'Choluteca', 'Choluteca', 'Francisco Morazán')
+    ON CONFLICT DO NOTHING;
+    """
+    with get_db() as conn:
+        conn.cursor().execute(schema_sql)
+    return "✅ Base de datos inicializada. Tablas y datos semilla listos."
+
+if __name__ == "__main__":
+    logger.info("🚀 INICIANDO ARES LOGISTICS MCP SERVER...")
+    try:
+        mcp.run(transport="stdio")
+    except KeyboardInterrupt:
+        logger.info("🛑 Apagado seguro.")
+    except Exception as e:
+        logger.critical(f"💥 Error fatal: {e}")
+        sys.exit(1)

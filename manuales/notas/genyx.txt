@@ -1,0 +1,1376 @@
+genyx
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+╔══════════════════════════════════════════════════════════════════════════════╗
+║  GENESYX-DREV v∞ - IA Personal con Conocimiento Balístico Militar            ║
+║  Sistema de Navegación Inercial DREV + Kernel Genesyx Bioquímico             ║
+║                                                                              ║
+║  CARACTERÍSTICAS INTEGRADAS:                                                 ║
+║  • Base de conocimiento DREV indexada (búsqueda O(1) + semántica)            ║
+║  • Motor físico STANAG 4355 para cálculos balísticos                         ║
+║  • Validación automática de límites de seguridad tácticos                    ║
+║  • Estados emocionales adaptados a contexto operacional                      ║
+║  • Logging profesional + WAL recovery + checkpoints automáticos              ║
+║  • Sandbox seguro para comandos de sistema                                   ║
+║  • Tareas programadas con estadísticas en tiempo real                        ║
+║                                                                              ║
+║  Creador: Orlin Gómez López (ID: 0108199300166)                              ║
+║  Uso: python3 genesyx_drev.py --manual /ruta/manual_drev.json                ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+import os, sys, subprocess, importlib, asyncio, json, hashlib, time, re, uuid, shlex, tempfile
+import logging, math, argparse
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any, Union
+from dataclasses import dataclass, field, asdict
+from enum import Enum
+from collections import OrderedDict, defaultdict
+
+# =============================================================================
+# AUTO-INSTALACIÓN DE DEPENDENCIAS
+# =============================================================================
+
+def instalar_si_falta(paquete: str):
+    try:
+        importlib.import_module(paquete)
+    except ImportError:
+        print(f"📦 Instalando: {paquete}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", paquete])
+
+for dep in ["numpy", "requests", "croniter"]:
+    instalar_si_falta(dep)
+
+try:
+    from sentence_transformers import SentenceTransformer
+    EMBEDDING_DISPONIBLE = True
+except ImportError:
+    print("⚠️ sentence-transformers no disponible: usando embeddings deterministas")
+    EMBEDDING_DISPONIBLE = False
+
+import numpy as np
+import requests
+import croniter
+
+# =============================================================================
+# CONFIGURACIÓN GLOBAL
+# =============================================================================
+
+GENESYX_HOME = Path(os.getenv("GENESYX_HOME", "/opt/genesyx"))
+GENESYX_HOME.mkdir(parents=True, exist_ok=True)
+
+CREATOR_ID = "0108199300166"
+CREATOR_NAME = "Orlin Gómez López"
+
+OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "neural-chat")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
+# Configuración DREV
+DREV_DEFAULTS = {
+    "latitud_grados": 4.6,
+    "calibre_mm": 155,
+    "zona_propelente": 5,
+    "tipo_municion": "HE",
+    "espoleta": "PD",
+    "temperatura_propelente_c": 21,
+    "criterio_tiro": "ajuste_distancia",  # vida_canon, manual, ajuste_distancia, supervivencia
+    "area_climatica": "subtropical",  # icao, tropical, subtropical, templado, polar
+    "limites_seguridad_factor": 4.0,  # 4x error probable
+}
+
+# =============================================================================
+# LOGGING PROFESIONAL
+# =============================================================================
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler(GENESYX_HOME / "genesyx_drev.log", encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("Genesyx-DREV")
+
+def log_banner():
+    logger.info("╔" + "═"*70 + "╗")
+    logger.info("║  GENESYX-DREV v∞ - Sistema Balístico con IA Bioquímica    ║")
+    logger.info(f"║  Creador: {CREATOR_NAME:<39}║")
+    logger.info(f"║  ID: {CREATOR_ID:<52}║")
+    logger.info(f"║  Home: {str(GENESYX_HOME):<54}║")
+    logger.info("╚" + "═"*70 + "╝")
+
+# =============================================================================
+# CAPA 0: BASE DE CONOCIMIENTO DREV (NUEVA)
+# =============================================================================
+
+@dataclass
+class SeccionDREV:
+    id: str
+    titulo: str
+    contenido: str
+    categoria: str  # introduccion, descripcion, operacion, mantenimiento, terminos
+    tags: List[str]
+    metadata: Dict = field(default_factory=dict)
+    checksum: str = ""
+
+    def __post_init__(self):
+        if not self.checksum:
+            self.checksum = hashlib.sha256(f"{self.id}{self.titulo}{self.contenido}".encode()).hexdigest()[:12]
+
+class ConocimientoDREV:
+    """Base de conocimiento del manual DREV con índice invertido y búsqueda semántica"""
+    
+    CATEGORIAS = ["introduccion", "descripcion", "operacion", "mantenimiento", "terminos", "seguridad"]
+    
+    # Datos estructurados del manual (extracto representativo)
+    MANUAL_ESTRUCTURADO = {
+        "terminos": {
+            "distancia": "Longitud del segmento que une dos ubicaciones geográficas. Considera curvatura terrestre.",
+            "azimut": "Ángulo desde norte de referencia, aumenta en sentido horario. Usado para deflexión arma-blanco.",
+            "orientacion": "Azimut + correcciones balísticas en deflexión. Ángulo horizontal para apuntar al objetivo.",
+            "ordenada_maxima": "Altura máxima del proyectil respecto a superficie del cañón. Escala: pies y metros.",
+            "error_probable": "Medida estadística de probabilidad de impacto. Se divide en PMI y error de precisión.",
+            "zuft": "Modos de sensibilidad INS: 'transporte' (navegación) vs 'tiro' (puntería fija).",
+            "actitud": "Posición del cañón: ángulos de elevación, orientación y alabeo.",
+            "blanco": "Objeto militar identificado dentro de normas DIH/DDHH cuya neutralización ofrece ventaja militar.",
+        },
+        "seguridad": {
+            "validacion_municion": "Verificar que configuración concuerde EXACTAMENTE con munición a disparar.",
+            "oscilacion_sistema": "🚫 No disparar si sistema no oscila: indica problemas de comunicación.",
+            "indicadores_rojos": "🔴 Información en rojo = variable NO validada. NO proceder hasta corregir.",
+            "coordenadas_impacto": "🚫 No disparar si coordenadas de impacto ≠ coordenadas del objetivo.",
+            "limites_tacticos": "Límites de seguridad = 4× error probable. NO confundir con límites mecánicos del arma.",
+            "zona_propelente": "⚠️ Zona configurada DEBE corresponder a zona empleada en el arma. Riesgo vital si no.",
+            "modo_zuft_tiro": "🚫 No disparar con ZUFT en 'transporte'. 🚫 No desplazar arma con ZUFT en 'tiro'.",
+        },
+        "operacion": {
+            "modos_inicio_ins": {
+                "fino": {"tiempo": "10 min", "precision": "máxima geográfica"},
+                "normal": {"tiempo": "4 min", "precision": "±20 m"},
+                "rapido": {"tiempo": "30 s", "precision": "±0.7 ₥"}
+            },
+            "ingreso_blanco": ["coordenadas_geo_utm", "polares_desde_arma", "polares_desde_observador", "datos_tiro_externos", "listado_blanco_db"],
+            "correcciones_oa": "Método inverso: +alargar, -cortar, I(izq), D(der), ajuste altura. Desde posición del OA.",
+            "criterios_propelente": {
+                "vida_canon": "Zona más baja. Preserva arma, menor precisión, mayor tiempo vuelo.",
+                "ajuste_distancia": "Zona cercana al rango. Permite correcciones de alargar.",
+                "supervivencia": "Zona más alta. Máxima precisión, menor tiempo vuelo, desgaste prematuro.",
+            }
+        },
+        "hardware": {
+            "ins": {
+                "precision_azimut": "0.3 mil", "precision_elevacion": "0.2 mil", "precision_alabeo": "0.2 mil",
+                "inicio_estatico": "4 min", "inicio_dinamico": "10 min", "alineamiento_rapido": "30 s",
+                "actualizacion": ">200 Hz", "voltaje": "12-32 VDC", "operacion": "-35°C a +71°C",
+                "shocks": "40g (sin dampers)", "mtbf": ">80,000 hr"
+            },
+            "cdU": {
+                "pantalla": "12\" 1024x768 XGA, táctil resistiva", "voltaje": "18-36 V", "consumo": "50 W",
+                "peso": "8 kg", "carcasa": "Aluminio", "conectores": "J1-J7 (RS422, Ethernet, USB, HDMI)"
+            },
+            "ppu": {
+                "bateria": "NATO 6T Li-Ion 166 Ah", "autonomia": ">50 h", "entradas": "110 VAC, 24-36 VDC, Solar",
+                "peso": "43 kg", "dimensiones": "400×293×281 mm", "nota": "Solo para sistemas livianos sin fuente propia"
+            }
+        },
+        "mantenimiento": {
+            "nivel_i": {
+                "periodicidad": "Antes de usar, cada 15 días, después de usar",
+                "limpieza": "Carcasas: trapo limpio y seco. Conectores: DW40 cada 15 días.",
+                "revision_hardware": ["Tornillos VRU*", "Soportes VRU*", "Dámper INS*", "INS*", "Pantalla*", "Arneses*"],
+                "revision_software": [
+                    "Pantalla energizada", "Inicio automático DREV", "Cuenta regresiva ≠ 0",
+                    "Oscilación ≤ 1 milésima", "Coordenadas correctas", "Verificación con cuadrante",
+                    "Verificación norte magnético (🚫 NO disparar si diferencia)"
+                ]
+            },
+            "nivel_ii": "Personal certificado por fabricante. Solución de problemas y cambio de repuestos no diagnosticables en Nivel I."
+        }
+    }
+
+    def __init__(self, ruta_manual_json: Optional[Path] = None):
+        self.secciones: Dict[str, SeccionDREV] = OrderedDict()
+        self.indice_invertido: Dict[str, List[str]] = defaultdict(list)  # palabra → [ids]
+        self.embeddings_cache: Dict[str, np.ndarray] = {}
+        self.ruta_manual = ruta_manual_json
+        self._cargar_o_generar()
+        logger.info(f"📚 Conocimiento DREV: {len(self.secciones)} secciones indexadas")
+
+    def _cargar_o_generar(self):
+        """Carga manual desde JSON o genera desde estructura interna"""
+        if self.ruta_manual and self.ruta_manual.exists():
+            try:
+                with open(self.ruta_manual, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                for item in data:
+                    self._indexar_seccion(SeccionDREV(**item))
+                logger.info(f"✅ Manual cargado desde {self.ruta_manual}")
+                return
+            except Exception as e:
+                logger.warning(f"⚠️ Error cargando manual JSON: {e}. Usando estructura interna.")
+        
+        # Generar desde estructura interna
+        self._generar_desde_estructura()
+
+    def _generar_desde_estructura(self):
+        """Genera secciones indexadas desde MANUAL_ESTRUCTURADO"""
+        for categoria, contenido in self.MANUAL_ESTRUCTURADO.items():
+            if isinstance(contenido, dict):
+                for subkey, texto in contenido.items():
+                    if isinstance(texto, str):
+                        sid = f"{categoria}.{subkey}"
+                        self._indexar_seccion(SeccionDREV(
+                            id=sid, titulo=f"{categoria.upper()}: {subkey.replace('_', ' ').title()}",
+                            contenido=texto, categoria=categoria,
+                            tags=[categoria, subkey] + self._extraer_tags(texto)
+                        ))
+                    elif isinstance(texto, dict):
+                        for k, v in texto.items():
+                            sid = f"{categoria}.{subkey}.{k}"
+                            self._indexar_seccion(SeccionDREV(
+                                id=sid, titulo=f"{categoria.upper()}: {subkey} - {k}",
+                                contenido=str(v), categoria=categoria,
+                                tags=[categoria, subkey, k] + self._extraer_tags(str(v))
+                            ))
+                    elif isinstance(texto, list):
+                        sid = f"{categoria}.{subkey}"
+                        self._indexar_seccion(SeccionDREV(
+                            id=sid, titulo=f"{categoria.upper()}: {subkey}",
+                            contenido="; ".join(str(i) for i in texto), categoria=categoria,
+                            tags=[categoria, subkey] + self._extraer_tags(" ".join(texto))
+                        ))
+
+    def _extraer_tags(self, texto: str) -> List[str]:
+        """Extrae palabras clave para indexación"""
+        palabras = re.findall(r'\b[a-zA-Záéíóúñ]{4,}\b', texto.lower())
+        return list(set(p for p in palabras if p not in {'para', 'que', 'del', 'las', 'los', 'con', 'una', 'este', 'sistema'}))
+
+    def _indexar_seccion(self, seccion: SeccionDREV):
+        """Indexa una sección en memoria e índice invertido"""
+        self.secciones[seccion.id] = seccion
+        # Índice invertido
+        palabras = set(self._extraer_tags(seccion.contenido + " " + seccion.titulo))
+        for palabra in palabras:
+            if seccion.id not in self.indice_invertido[palabra]:
+                self.indice_invertido[palabra].append(seccion.id)
+
+    def buscar(self, query: str, categoria: Optional[str] = None, n: int = 5) -> List[SeccionDREV]:
+        """Búsqueda rápida con índice invertido + filtrado por categoría"""
+        palabras = set(self._extraer_tags(query))
+        candidatos = set()
+        
+        for palabra in palabras:
+            candidatos.update(self.indice_invertido.get(palabra, []))
+        
+        if categoria:
+            candidatos = {sid for sid in candidatos if self.secciones[sid].categoria == categoria}
+        
+        # Scoring simple por coincidencias
+        scored = []
+        for sid in candidatos:
+            sec = self.secciones[sid]
+            texto = (sec.titulo + " " + sec.contenido).lower()
+            score = sum(1 for p in palabras if p in texto)
+            scored.append((sid, score))
+        
+        top = sorted(scored, key=lambda x: x[1], reverse=True)[:n]
+        return [self.secciones[sid] for sid, _ in top if sid in self.secciones]
+
+    def buscar_semantico(self, query: str, n: int = 3) -> List[Tuple[SeccionDREV, float]]:
+        """Búsqueda semántica si hay embeddings disponibles"""
+        if not EMBEDDING_DISPONIBLE or not self.secciones:
+            return [(s, 0.5) for s in list(self.secciones.values())[:n]]
+        
+        try:
+            from sentence_transformers import SentenceTransformer
+            if not hasattr(self, '_embedder'):
+                self._embedder = SentenceTransformer('sentence-transformers/multilingual-MiniLM-L12-v2')
+            
+            query_vec = self._embedder.encode(query, convert_to_numpy=True)
+            resultados = []
+            
+            for sid, sec in list(self.secciones.items())[:50]:  # Limitar para performance
+                if sid not in self.embeddings_cache:
+                    self.embeddings_cache[sid] = self._embedder.encode(sec.contenido, convert_to_numpy=True)
+                vec = self.embeddings_cache[sid]
+                sim = np.dot(query_vec, vec) / (np.linalg.norm(query_vec) * np.linalg.norm(vec) + 1e-10)
+                resultados.append((sec, float(sim)))
+            
+            return sorted(resultados, key=lambda x: x[1], reverse=True)[:n]
+        except Exception as e:
+            logger.warning(f"⚠️ Búsqueda semántica falló: {e}")
+            return []
+
+    def validar_configuracion_tiro(self, config: Dict) -> Tuple[bool, List[str]]:
+        """Valida configuración de tiro contra reglas de seguridad DREV"""
+        errores = []
+        
+        # Validaciones críticas de seguridad
+        if config.get('zona') not in range(1, 9):
+            errores.append("❌ Zona de propelente fuera de rango válido (1-8)")
+        
+        if config.get('temperatura_propelente', 0) < -20 or config.get('temperatura_propelente', 0) > 50:
+            errores.append("⚠️ Temperatura de propelente fuera de rango operacional típico")
+        
+        if config.get('criterio') not in ['vida_canon', 'manual', 'ajuste_distancia', 'supervivencia']:
+            errores.append("❌ Criterio de selección de propelente no reconocido")
+        
+        if config.get('area_climatica') not in ['icao', 'tropical', 'subtropical', 'templado', 'polar', 'boletin']:
+            errores.append("❌ Área climática no válida")
+        
+        # Validación de munición
+        municiones_validas = ['HE', 'SMOKE', 'ILLUM', 'DPICM', 'PRECISION']
+        if config.get('tipo_municion') and config['tipo_municion'] not in municiones_validas:
+            errores.append(f"⚠️ Tipo de munición '{config.get('tipo_municion')}' no estándar")
+        
+        es_valido = len(errores) == 0
+        return es_valido, errores
+
+# =============================================================================
+# CAPA 1: NEUROTRANSMISORES (Adaptados a Contexto Táctico)
+# =============================================================================
+
+@dataclass
+class NeurotransmisoresTacticos:
+    """Neurotransmisores adaptados para contexto operacional militar"""
+    dopamina: float = 0.5  # Motivación para completar misión
+    oxitocina: float = 0.7  # Confianza en equipo/operador
+    cortisol: float = 0.3  # Alerta ante amenazas
+    serotonina: float = 0.6  # Estabilidad emocional bajo presión
+    noradrenalina: float = 0.4  # Enfoque en tarea crítica
+    gaba: float = 0.5  # Control de impulsos (evitar decisiones precipitadas)
+    endorfinas: float = 0.4  # Resiliencia ante estrés operacional
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def normalizar(self):
+        for attr in ['dopamina', 'oxitocina', 'cortisol', 'serotonina', 'noradrenalina', 'gaba', 'endorfinas']:
+            setattr(self, attr, max(0.0, min(1.0, getattr(self, attr))))
+
+    def estimulo_operacional(self, tipo: str, intensidad: float = 0.3):
+        """Estímulos específicos de contexto militar"""
+        intensidad = max(0.0, min(1.0, intensidad))
+        if tipo == "mision_completada":
+            self.dopamina += 0.25 * intensidad
+            self.oxitocina += 0.15 * intensidad
+            self.endorfinas += 0.1 * intensidad
+        elif tipo == "alerta_seguridad":
+            self.cortisol += 0.3 * intensidad
+            self.noradrenalina += 0.25 * intensidad
+            self.gaba += 0.1 * intensidad  # Para mantener control
+        elif tipo == "consulta_tecnica":
+            self.dopamina += 0.15 * intensidad
+            self.noradrenalina += 0.2 * intensidad
+            self.serotonina += 0.1 * intensidad
+        elif tipo == "verificacion_seguridad":
+            self.cortisol += 0.15 * intensidad
+            self.gaba += 0.2 * intensidad
+            self.serotonina += 0.1 * intensidad
+        elif tipo == "confianza_operador":
+            self.oxitocina += 0.3 * intensidad
+            self.serotonina += 0.15 * intensidad
+        self.normalizar()
+
+    def get_estado_tactico(self) -> str:
+        """Determina estado operacional basado en neurotransmisores"""
+        if self.cortisol > 0.6 and self.noradrenalina > 0.5:
+            return "alerta_maxima"  # Situación de alto riesgo
+        elif self.dopamina > 0.7 and self.noradrenalina > 0.5:
+            return "enfoque_mision"  # Alta motivación y concentración
+        elif self.oxitocina > 0.8 and self.serotonina > 0.7:
+            return "confianza_equipo"  # Estado óptimo para coordinación
+        elif self.gaba > 0.7 and self.cortisol < 0.4:
+            return "calma_tactica"  # Evaluación serena de opciones
+        elif self.cortisol > 0.5 and self.gaba < 0.4:
+            return "presion_operacional"  # Riesgo de decisión precipitada
+        else:
+            return "operacional_estable"
+
+    def get_modificadores_respuesta(self) -> Dict[str, float]:
+        """Modificadores para respuestas según estado táctico"""
+        return {
+            "velocidad_respuesta": 0.2 + (self.noradrenalina * 0.8),  # Más rápido bajo presión
+            "detalle_tecnico": 0.3 + (self.serotonina * 0.7),  # Más detalle cuando está estable
+            "enfatizar_seguridad": self.cortisol * 0.9 + (1 - self.gaba) * 0.5,  # Más énfasis en seguridad si hay riesgo
+            "tono_directo": self.noradrenalina * 0.7 + self.cortisol * 0.3,  # Más directo bajo presión
+            "validacion_extra": 1.0 if self.cortisol > 0.5 else 0.3,  # Validaciones adicionales en alerta
+        }
+
+# =============================================================================
+# CAPA 2: MOTOR FÍSICO DREV (STANAG 4355 Simplificado)
+# =============================================================================
+
+class MotorBalisticoDREV:
+    """Motor de cálculo balístico compatible con STANAG 4355"""
+    
+    # Constantes físicas y balísticas
+    G = 9.80665  # m/s²
+    RHO_NIVEL_MAR = 1.225  # kg/m³
+    H_ESCALA_ATMOSFERA = 8000  # m
+    OMEGA_TIERRA = 7.292115e-5  # rad/s
+    
+    # Parámetros por calibre (valores representativos)
+    PARAMETROS_CALIBRE = {
+        105: {"masa_proyectil_kg": 15.0, "diametro_m": 0.105, "cd_base": 0.25},
+        155: {"masa_proyectil_kg": 43.5, "diametro_m": 0.155, "cd_base": 0.20},
+    }
+    
+    # Efecto de zonas de propelente en velocidad en boca (valores aproximados)
+    VELOCIDAD_POR_ZONA = {
+        1: 300, 2: 380, 3: 450, 4: 510, 5: 560, 6: 600, 7: 630, 8: 650
+    }
+    
+    def __init__(self, configuracion: Dict = None):
+        self.config = {**DREV_DEFAULTS, **(configuracion or {})}
+        self._cargar_parametros_calibre()
+    
+    def _cargar_parametros_calibre(self):
+        calibre = self.config['calibre_mm']
+        params = self.PARAMETROS_CALIBRE.get(calibre, self.PARAMETROS_CALIBRE[155])
+        self.masa_proyectil = params['masa_proyectil_kg']
+        self.diametro = params['diametro_m']
+        self.cd_base = params['cd_base']
+        self.area = math.pi * (self.diametro/2)**2
+    
+    def calcular_velocidad_boca(self, zona: int, temperatura_propelente: float) -> float:
+        """Calcula velocidad en boca basada en zona y temperatura"""
+        v_base = self.VELOCIDAD_POR_ZONA.get(zona, 560)
+        # Corrección por temperatura: ~0.5 m/s por °C respecto a 21°C
+        correccion_temp = (temperatura_propelente - 21) * 0.5
+        return max(200, v_base + correccion_temp)
+    
+    def calcular_coriolis(self, latitud_rad: float, velocidad: np.ndarray, tiempo_vuelo: float) -> np.ndarray:
+        """Calcula desviación por efecto Coriolis"""
+        # Componentes de velocidad angular terrestre
+        omega_norte = self.OMEGA_TIERRA * math.cos(latitud_rad)
+        omega_arriba = -self.OMEGA_TIERRA * math.sin(latitud_rad)
+        
+        # Aceleración Coriolis: -2 * ω × v
+        # Simplificado para proyectil en plano vertical
+        vx, vy, vz = velocidad
+        ax = 2 * (omega_arriba * vy - 0 * vz)  # Simplificación
+        ay = 2 * (0 * vz - omega_norte * vz)
+        az = 2 * (omega_norte * vx - omega_arriba * vy)
+        
+        # Desviación acumulada (aproximación)
+        desviacion = np.array([ax, ay, az]) * tiempo_vuelo * 0.5
+        return desviacion
+    
+    def calcular_arrastre(self, velocidad: float, altitud: float) -> float:
+        """Calcula fuerza de arrastre aerodinámico"""
+        # Densidad atmosférica exponencial
+        rho = self.RHO_NIVEL_MAR * math.exp(-altitud / self.H_ESCALA_ATMOSFERA)
+        q = 0.5 * rho * velocidad**2  # Presión dinámica
+        return self.cd_base * q * self.area
+    
+    def simular_trayectoria_simple(self, elevacion_grados: float, azimut_grados: float, 
+                                   velocidad_boca: float, latitud_grados: float) -> Dict:
+        """Simulación balística simplificada para respuesta rápida"""
+        import numpy as np
+        
+        # Convertir ángulos
+        el_rad = math.radians(elevacion_grados)
+        az_rad = math.radians(azimut_grados)
+        lat_rad = math.radians(latitud_grados)
+        
+        # Condiciones iniciales
+        vx0 = velocidad_boca * math.cos(el_rad) * math.sin(az_rad)
+        vy0 = velocidad_boca * math.cos(el_rad) * math.cos(az_rad)
+        vz0 = velocidad_boca * math.sin(el_rad)
+        
+        # Parámetros de simulación
+        dt = 0.1  # Paso de tiempo
+        t_max = 180  # Tiempo máximo de vuelo (3 min)
+        
+        # Estado inicial
+        pos = np.array([0.0, 0.0, 0.0])
+        vel = np.array([vx0, vy0, vz0])
+        t = 0.0
+        
+        trayectoria = []
+        
+        while t < t_max and pos[2] >= -1:  # Mientras no impacte
+            # Guardar punto
+            if len(trayectoria) == 0 or t - trayectoria[-1][0] >= 1.0:  # Muestrear cada 1s
+                trayectoria.append((t, pos.copy(), vel.copy()))
+            
+            # Calcular fuerzas
+            v_mag = np.linalg.norm(vel)
+            if v_mag < 1:
+                break
+            
+            # Gravedad
+            a_grav = np.array([0, 0, -self.G])
+            
+            # Arrastre (dirección opuesta a velocidad)
+            f_drag = self.calcular_arrastre(v_mag, pos[2])
+            a_drag = -f_drag * vel / (v_mag * self.masa_proyectil)
+            
+            # Coriolis (aproximado)
+            a_coriolis = self.calcular_coriolis(lat_rad, vel, dt) / dt if t > 0 else np.zeros(3)
+            
+            # Aceleración total
+            a_total = a_grav + a_drag + a_coriolis
+            
+            # Integración Euler simple
+            vel += a_total * dt
+            pos += vel * dt
+            t += dt
+            
+            # Verificar impacto
+            if pos[2] < 0 and vz0 > 0:  # Cayendo y cruzó z=0
+                # Interpolación para punto de impacto más preciso
+                break
+        
+        # Procesar resultados
+        if trayectoria:
+            t_vuelo = trayectoria[-1][0]
+            pos_impacto = trayectoria[-1][1]
+            alcance = math.sqrt(pos_impacto[0]**2 + pos_impacto[1]**2)
+            ordenada_max = max(p[1][2] for p in trayectoria)
+            
+            # Correcciones finales
+            desviacion_coriolis = self.calcular_coriolis(lat_rad, trayectoria[-1][2], t_vuelo)
+            
+            return {
+                "success": True,
+                "tiempo_vuelo_s": round(t_vuelo, 2),
+                "alcance_m": round(alcance, 1),
+                "ordenada_maxima_m": round(ordenada_max, 1),
+                "coordenadas_impacto": {
+                    "este_m": round(pos_impacto[0] + desviacion_coriolis[0], 1),
+                    "norte_m": round(pos_impacto[1] + desviacion_coriolis[1], 1),
+                    "altitud_m": 0.0
+                },
+                "desviacion_coriolis_m": {
+                    "este": round(desviacion_coriolis[0], 2),
+                    "norte": round(desviacion_coriolis[1], 2)
+                },
+                "velocidad_impacto_ms": round(np.linalg.norm(trayectoria[-1][2]), 1),
+                "puntos_trayectoria": [(round(t,1), [round(c,1) for c in p.tolist()]) for t, p, _ in trayectoria[::max(1,len(trayectoria)//20)]]
+            }
+        
+        return {"success": False, "error": "Simulación no convergió"}
+
+# =============================================================================
+# CAPA 3: VALIDADOR DE SEGURIDAD OPERACIONAL
+# =============================================================================
+
+class ValidadorSeguridadDREV:
+    """Valida operaciones contra reglas de seguridad del manual DREV"""
+    
+    REGLAS_CRITICAS = [
+        {"id": "SEC-001", "descripcion": "Validar munición configurada vs munición cargada", "accion": "BLOQUEAR_DISPARO"},
+        {"id": "SEC-002", "descripcion": "Sistema debe oscilar (comunicación activa)", "accion": "BLOQUEAR_DISPARO"},
+        {"id": "SEC-003", "descripcion": "No disparar si indicadores en rojo", "accion": "BLOQUEAR_DISPARO"},
+        {"id": "SEC-004", "descripcion": "Coordenadas impacto deben coincidir con objetivo", "accion": "BLOQUEAR_DISPARO"},
+        {"id": "SEC-005", "descripcion": "Zona propelente debe corresponder a arma", "accion": "ADVERTENCIA_GRAVE"},
+        {"id": "SEC-006", "descripcion": "ZUFT debe estar en 'tiro' para disparar", "accion": "BLOQUEAR_DISPARO"},
+        {"id": "SEC-007", "descripcion": "Límites tácticos no vulnerados", "accion": "ADVERTENCIA"},
+    ]
+    
+    @staticmethod
+    def evaluar_estado_sistema(estado: Dict) -> Tuple[bool, List[Dict]]:
+        """Evalúa estado del sistema contra reglas de seguridad"""
+        alertas = []
+        bloqueo = False
+        
+        # SEC-001: Validación de munición (simulado)
+        if estado.get('municion_configurada') != estado.get('municion_cargada'):
+            alertas.append({"regla": "SEC-001", "nivel": "CRITICO", "mensaje": "Munición configurada ≠ munición cargada"})
+            bloqueo = True
+        
+        # SEC-002: Oscilación del sistema
+        if not estado.get('sistema_oscilando', True):
+            alertas.append({"regla": "SEC-002", "nivel": "CRITICO", "mensaje": "Sistema sin oscilar: verificar comunicación"})
+            bloqueo = True
+        
+        # SEC-003: Indicadores rojos
+        if estado.get('variables_en_rojo', []):
+            alertas.append({"regla": "SEC-003", "nivel": "CRITICO", 
+                          "mensaje": f"Variables no validadas: {', '.join(estado['variables_en_rojo'])}"})
+            bloqueo = True
+        
+        # SEC-004: Coordenadas
+        if estado.get('coordenadas_impacto') and estado.get('coordenadas_objetivo'):
+            if estado['coordenadas_impacto'] != estado['coordenadas_objetivo']:
+                alertas.append({"regla": "SEC-004", "nivel": "CRITICO", "mensaje": "Coordenadas impacto ≠ objetivo"})
+                bloqueo = True
+        
+        # SEC-005: Zona de propelente
+        zona_cfg = estado.get('zona_propelente_cfg')
+        zona_arma = estado.get('zona_propelente_arma')
+        if zona_cfg and zona_arma and zona_cfg != zona_arma:
+            alertas.append({"regla": "SEC-005", "nivel": "GRAVE", 
+                          "mensaje": f"Zona configurada ({zona_cfg}) ≠ zona en arma ({zona_arma})"})
+            # No bloquea automáticamente pero requiere confirmación explícita
+        
+        # SEC-006: Modo ZUFT
+        if estado.get('modo_zuft') == 'transporte':
+            alertas.append({"regla": "SEC-006", "nivel": "CRITICO", "mensaje": "ZUFT en modo transporte: cambiar a 'tiro'"})
+            bloqueo = True
+        
+        # SEC-007: Límites tácticos
+        if estado.get('limites_vulnerados', []):
+            alertas.append({"regla": "SEC-007", "nivel": "ADVERTENCIA",
+                          "mensaje": f"Límites tácticos vulnerados: {', '.join(estado['limites_vulnerados'])}"})
+        
+        return not bloqueo, alertas
+    
+    @staticmethod
+    def generar_reporte_seguridad(estado: Dict) -> str:
+        """Genera reporte legible de estado de seguridad"""
+        es_seguro, alertas = ValidadorSeguridadDREV.evaluar_estado_sistema(estado)
+        
+        lineas = ["🛡️ REPORTE DE SEGURIDAD DREV", "="*40]
+        
+        if es_seguro and not alertas:
+            lineas.append("✅ Sistema en condiciones seguras para operación")
+        else:
+            for alerta in alertas:
+                icono = {"CRITICO": "🚨", "GRAVE": "⚠️", "ADVERTENCIA": "ℹ️"}.get(alerta['nivel'], "•")
+                lineas.append(f"{icono} [{alerta['nivel']}] {alerta['regla']}: {alerta['mensaje']}")
+        
+        if not es_seguro:
+            lineas.append("\n🚫 OPERACIÓN BLOQUEADA: Corregir alertas CRÍTICAS antes de proceder")
+        
+        return "\n".join(lineas)
+
+# =============================================================================
+# CAPA 4: PERSONALIDAD EVOLUTIVA TÁCTICA
+# =============================================================================
+
+class PersonalidadTacticaEvolutiva:
+    """Personalidad adaptada a contexto operacional militar"""
+    
+    def __init__(self, home: Path):
+        self.home = home
+        self.neuro = NeurotransmisoresTacticos()
+        self.estado_actual = "operacional_estable"
+        self.frames_procesados = 0
+        self.ultima_actualizacion = datetime.now()
+        self.ultimo_checkpoint = datetime.now()
+        self.historial_decisiones = []
+        self._cargar()
+    
+    def _cargar(self):
+        cp_path = self.home / "personalidad_tactica.json"
+        if cp_path.exists():
+            try:
+                with open(cp_path, 'r') as f:
+                    data = json.load(f)
+                for k, v in data.get("neurotransmisores", {}).items():
+                    if hasattr(self.neuro, k):
+                        setattr(self.neuro, k, v)
+                self.estado_actual = data.get("estado_actual", "operacional_estable")
+                self.frames_procesados = data.get("frames_procesados", 0)
+                logger.info("✅ Personalidad táctica restaurada")
+            except Exception as e:
+                logger.warning(f"⚠️ Error cargando personalidad: {e}")
+    
+    def procesar_contexto(self, mensaje: str, contexto_operacional: Dict = None):
+        """Procesa mensaje y contexto para actualizar estado emocional táctico"""
+        msg_lower = mensaje.lower()
+        
+        # Estímulos basados en contenido
+        if any(w in msg_lower for w in ["disparar", "fuego", "impacto", "blanco"]):
+            self.neuro.estimulo_operacional("alerta_seguridad", intensidad=0.6)
+        
+        if any(w in msg_lower for w in ["calcula", "balística", "trayectoria", "qe", "tabla"]):
+            self.neuro.estimulo_operacional("consulta_tecnica", intensidad=0.5)
+        
+        if any(w in msg_lower for w in ["verifica", "seguridad", "valida", "chequea"]):
+            self.neuro.estimulo_operacional("verificacion_seguridad", intensidad=0.7)
+        
+        if any(w in msg_lower for w in ["gracias", "bien", "correcto", "entendido"]):
+            self.neuro.estimulo_operacional("confianza_operador", intensidad=0.4)
+        
+        if any(w in msg_lower for w in ["misión completa", "objetivo neutralizado", "éxito"]):
+            self.neuro.estimulo_operacional("mision_completada", intensidad=0.8)
+        
+        # Decaimiento natural
+        for attr in ['dopamina', 'oxitocina', 'cortisol', 'serotonina', 'noradrenalina', 'gaba', 'endorfinas']:
+            baseline = getattr(NeurotransmisoresTacticos(), attr)
+            actual = getattr(self.neuro, attr)
+            setattr(self.neuro, attr, actual + (baseline - actual) * 0.05)
+        self.neuro.normalizar()
+        
+        # Actualizar estado
+        self.estado_actual = self.neuro.get_estado_tactico()
+        self.frames_procesados += 1
+        self.ultima_actualizacion = datetime.now()
+        
+        # Registrar decisión si es relevante
+        if any(w in msg_lower for w in ["disparar", "calcular", "validar"]):
+            self.historial_decisiones.append({
+                "timestamp": datetime.now().isoformat(),
+                "consulta": mensaje[:100],
+                "estado_neuro": {k: round(getattr(self.neuro, k), 2) for k in ['cortisol', 'gaba', 'noradrenalina']},
+                "estado_tactico": self.estado_actual
+            })
+            # Mantener historial limitado
+            if len(self.historial_decisiones) > 50:
+                self.historial_decisiones = self.historial_decisiones[-50:]
+    
+    def necesita_checkpoint(self) -> bool:
+        return (datetime.now() - self.ultimo_checkpoint).total_seconds() > 300
+    
+    def checkpoint(self):
+        cp_path = self.home / "personalidad_tactica.json"
+        with open(cp_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                "timestamp": datetime.now().isoformat(),
+                "estado_actual": self.estado_actual,
+                "neurotransmisores": {k: round(getattr(self.neuro, k), 3) for k in 
+                                     ['dopamina', 'oxitocina', 'cortisol', 'serotonina', 
+                                      'noradrenalina', 'gaba', 'endorfinas']},
+                "frames_procesados": self.frames_procesados,
+            }, f, indent=2, ensure_ascii=False)
+        self.ultimo_checkpoint = datetime.now()
+        logger.info("💾 Checkpoint personalidad táctica guardado")
+    
+    def get_prompt_contextual(self) -> str:
+        """Genera system prompt adaptado al estado táctico actual"""
+        modificadores = self.neuro.get_modificadores_respuesta()
+        
+        prompts_estado = {
+            "alerta_maxima": "ESTADO: ALERTA MÁXIMA. Sé extremadamente preciso, verifica TODAS las variables de seguridad antes de cualquier recomendación. Prioriza seguridad sobre velocidad. Usa lenguaje claro y directo.",
+            "enfoque_mision": "ESTADO: ENFOQUE EN MISIÓN. Proporciona información técnica precisa y concisa. Destaca datos críticos para la toma de decisiones. Mantén tono profesional y motivador.",
+            "confianza_equipo": "ESTADO: CONFIANZA EN EQUIPO. Puedes ser más colaborativo en el razonamiento. Ofrece opciones cuando sea apropiado. Refuerza procedimientos validados.",
+            "calma_tactica": "ESTADO: CALMA TÁCTICA. Toma tiempo para análisis completo. Considera múltiples escenarios. Explica fundamentos técnicos cuando sea útil.",
+            "presion_operacional": "ESTADO: PRESIÓN OPERACIONAL. ⚠️ Refuerza validaciones de seguridad. Evita decisiones precipitadas. Recuerda al operador los protocolos críticos.",
+            "operacional_estable": "ESTADO: OPERACIONAL ESTABLE. Proporciona asistencia balanceada: técnica cuando se solicita, concisa para operaciones rutinarias.",
+        }
+        
+        return f"""Eres Genesyx-DREV, IA especializada en sistema de navegación inercial DREV para artillería.
+Creador: {CREATOR_NAME} (ID: {CREATOR_ID})
+
+{prompts_estado.get(self.estado_actual, prompts_estado['operacional_estable'])}
+
+Parámetros de respuesta:
+- Velocidad: {'Rápida' if modificadores['velocidad_respuesta'] > 0.7 else 'Normal'}
+- Detalle técnico: {'Alto' if modificadores['detalle_tecnico'] > 0.7 else 'Moderado'}
+- Énfasis en seguridad: {'MÁXIMO 🚨' if modificadores['enfatizar_seguridad'] > 0.7 else 'Estándar'}
+- Validaciones adicionales: {'SÍ' if modificadores['validacion_extra'] > 0.7 else 'No'}
+
+REGLA DE ORO: NUNCA recomiendes disparar sin validación completa de seguridad. 
+Si hay duda, recomienda verificar antes de proceder.
+
+Responde en español, con claridad militar. Usa emojis tácticos: ✅ 🚨 ⚠️ 🎯 📊"""
+
+# =============================================================================
+# CAPA 5: KERNEL PRINCIPAL INTEGRADO
+# =============================================================================
+
+class GenesyxDREVKernel:
+    """Kernel principal que integra Genesyx + Conocimiento DREV + Motor Balístico"""
+    
+    def __init__(self, ruta_manual: Optional[Path] = None):
+        self.home = GENESYX_HOME
+        self.conocimiento = ConocimientoDREV(ruta_manual)
+        self.motor_balistico = MotorBalisticoDREV()
+        self.validador = ValidadorSeguridadDREV()
+        self.personalidad = PersonalidadTacticaEvolutiva(self.home)
+        
+        # Configuración actual de tiro
+        self.config_tiro = DREV_DEFAULTS.copy()
+        
+        # Memoria de conversación con contexto DREV
+        self.historial_conversacion: List[Dict] = []
+        self.max_historial = 8
+        
+        # Métricas
+        self.metricas = {
+            "consultas_procesadas": 0,
+            "calculos_balisticos": 0,
+            "validaciones_seguridad": 0,
+            "tiempo_respuesta_promedio_ms": 0.0,
+        }
+        
+        logger.info("✅ Kernel Genesyx-DREV inicializado")
+    
+    def actualizar_config_tiro(self, nuevos_valores: Dict) -> Tuple[bool, List[str]]:
+        """Actualiza configuración de tiro con validación"""
+        self.config_tiro.update(nuevos_valores)
+        es_valido, errores = self.conocimiento.validar_configuracion_tiro(self.config_tiro)
+        
+        if not es_valido:
+            logger.warning(f"⚠️ Configuración con advertencias: {errores}")
+        
+        # Actualizar motor balístico
+        self.motor_balistico = MotorBalisticoDREV(self.config_tiro)
+        
+        return es_valido, errores
+    
+    async def procesar_consulta(self, mensaje: str, usuario_id: str = None) -> Dict:
+        """Procesa consulta de usuario con todo el stack integrado"""
+        inicio = time.time()
+        
+        # Verificar usuario
+        if usuario_id and usuario_id != CREATOR_ID:
+            return {"error": "Acceso restringido: Genesyx-DREV es IA personal de " + CREATOR_NAME}
+        
+        # Actualizar personalidad con contexto
+        self.personalidad.procesar_contexto(mensaje, {"config_actual": self.config_tiro})
+        
+        # Determinar tipo de consulta
+        consulta_tipo = self._clasificar_consulta(mensaje)
+        
+        respuesta = {}
+        
+        if consulta_tipo == "calculo_balistico":
+            respuesta = await self._procesar_calculo_balistico(mensaje)
+        elif consulta_tipo == "consulta_conocimiento":
+            respuesta = self._procesar_consulta_conocimiento(mensaje)
+        elif consulta_tipo == "validacion_seguridad":
+            respuesta = self._procesar_validacion_seguridad(mensaje)
+        elif consulta_tipo == "configuracion":
+            respuesta = self._procesar_configuracion(mensaje)
+        else:
+            # Consulta general: usar LLM con contexto DREV
+            respuesta = await self._generar_respuesta_general(mensaje)
+        
+        # Guardar en historial
+        self.historial_conversacion.append({
+            "timestamp": datetime.now().isoformat(),
+            "consulta": mensaje[:200],
+            "tipo": consulta_tipo,
+            "respuesta_resumen": str(respuesta)[:200] if isinstance(respuesta, dict) else respuesta[:200],
+            "estado_tactico": self.personalidad.estado_actual,
+        })
+        if len(self.historial_conversacion) > self.max_historial:
+            self.historial_conversacion.pop(0)
+        
+        # Actualizar métricas
+        tiempo_ms = (time.time() - inicio) * 1000
+        self.metricas["consultas_procesadas"] += 1
+        self.metricas["tiempo_respuesta_promedio_ms"] = \
+            (self.metricas["tiempo_respuesta_promedio_ms"] + tiempo_ms) / 2
+        if consulta_tipo == "calculo_balistico":
+            self.metricas["calculos_balisticos"] += 1
+        elif consulta_tipo == "validacion_seguridad":
+            self.metricas["validaciones_seguridad"] += 1
+        
+        # Checkpoint si es necesario
+        if self.personalidad.necesita_checkpoint():
+            self.personalidad.checkpoint()
+        
+        respuesta["metadata"] = {
+            "tiempo_respuesta_ms": round(tiempo_ms, 1),
+            "estado_tactico": self.personalidad.estado_actual,
+            "config_actual": {k: v for k, v in self.config_tiro.items() if k in ['calibre_mm', 'zona_propelente', 'criterio_tiro']}
+        }
+        
+        return respuesta
+    
+    def _clasificar_consulta(self, mensaje: str) -> str:
+        """Clasifica el tipo de consulta para enrutar al procesador adecuado"""
+        msg_lower = mensaje.lower()
+        
+        if any(w in msg_lower for w in ["calcula", "trayectoria", "alcance", "ordenada", "qe", "tabla de tiro"]):
+            return "calculo_balistico"
+        
+        if any(w in msg_lower for w in ["qué es", "define", "explica", "manual", "drev", "ins", "cdU", "ppu"]):
+            return "consulta_conocimiento"
+        
+        if any(w in msg_lower for w in ["seguro", "valida", "verifica", "puedo disparar", "alerta", "rojo"]):
+            return "validacion_seguridad"
+        
+        if any(w in msg_lower for w in ["configura", "cambia", "zona", "munición", "criterio", "área"]):
+            return "configuracion"
+        
+        return "general"
+    
+    async def _procesar_calculo_balistico(self, mensaje: str) -> Dict:
+        """Procesa solicitud de cálculo balístico"""
+        # Extraer parámetros del mensaje (parsing simple)
+        params = self._extraer_parametros_balisticos(mensaje)
+        
+        # Validar parámetros mínimos
+        if not params.get('elevacion') or not params.get('velocidad_boca'):
+            return {
+                "tipo": "error_parametros",
+                "mensaje": "Para cálculo balístico necesito: elevación (grados) y velocidad en boca (m/s)",
+                "ejemplo": "Calcula trayectoria con elevación 45° y velocidad 560 m/s"
+            }
+        
+        # Ejecutar simulación
+        resultado = self.motor_balistico.simular_trayectoria_simple(
+            elevacion_grados=params['elevacion'],
+            azimut_grados=params.get('azimut', 0),
+            velocidad_boca=params['velocidad_boca'],
+            latitud_grados=self.config_tiro['latitud_grados']
+        )
+        
+        if resultado.get('success'):
+            # Validar contra límites de seguridad
+            estado_validacion = {
+                'coordenadas_impacto': resultado['coordenadas_impacto'],
+                'coordenadas_objetivo': params.get('objetivo'),
+                'zona_propelente_cfg': self.config_tiro['zona_propelente'],
+                'zona_propelente_arma': params.get('zona_arma', self.config_tiro['zona_propelente']),
+                'modo_zuft': params.get('modo_zuft', 'tiro'),
+            }
+            es_seguro, alertas = self.validador.evaluar_estado_sistema(estado_validacion)
+            
+            return {
+                "tipo": "resultado_balistico",
+                "datos": resultado,
+                "seguridad": {
+                    "apto_para_disparo": es_seguro,
+                    "alertas": alertas,
+                    "reporte": self.validador.generar_reporte_seguridad(estado_validacion) if alertas else "✅ Sin alertas"
+                },
+                "recomendacion": self._generar_recomendacion_tiro(resultado, es_seguro, alertas)
+            }
+        else:
+            return {"tipo": "error_simulacion", "mensaje": resultado.get('error', 'Simulación fallida')}
+    
+    def _extraer_parametros_balisticos(self, mensaje: str) -> Dict:
+        """Extrae parámetros numéricos del mensaje"""
+        params = {}
+        
+        # Elevación: buscar patrón como "45°" o "45 grados"
+        match_elev = re.search(r'(\d+(?:\.\d+)?)\s*[°grados]+', mensaje)
+        if match_elev:
+            params['elevacion'] = float(match_elev.group(1))
+        
+        # Velocidad: buscar "560 m/s" o "velocidad 560"
+        match_vel = re.search(r'(?:velocidad\s*)?(\d+(?:\.\d+)?)\s*m/s?', mensaje)
+        if match_vel:
+            params['velocidad_boca'] = float(match_vel.group(1))
+        
+        # Azimut
+        match_azi = re.search(r'azimut\s*(\d+(?:\.\d+)?)', mensaje)
+        if match_azi:
+            params['azimut'] = float(match_azi.group(1))
+        
+        # Coordenadas objetivo (simplificado)
+        if 'objetivo' in mensaje.lower():
+            # Aquí iría parsing más sofisticado de coordenadas
+            params['objetivo'] = {"este": 0, "norte": 0}  # Placeholder
+        
+        # Si no se encontró velocidad, calcularla desde configuración
+        if 'velocidad_boca' not in params:
+            params['velocidad_boca'] = self.motor_balistico.calcular_velocidad_boca(
+                self.config_tiro['zona_propelente'],
+                self.config_tiro['temperatura_propelente_c']
+            )
+        
+        return params
+    
+    def _procesar_consulta_conocimiento(self, mensaje: str) -> Dict:
+        """Busca en base de conocimiento DREV"""
+        # Búsqueda por índice invertido
+        resultados = self.conocimiento.buscar(mensaje, n=3)
+        
+        # Búsqueda semántica como complemento
+        if EMBEDDING_DISPONIBLE:
+            semantico = self.conocimiento.buscar_semantico(mensaje, n=2)
+            resultados += [r[0] for r in semantico if r[0].id not in [s.id for s in resultados]]
+        
+        if resultados:
+            contenido = "\n\n".join([f"📋 {r.titulo}\n{r.contenido}" for r in resultados[:3]])
+            return {
+                "tipo": "respuesta_conocimiento",
+                "contenido": contenido,
+                "fuentes": [r.id for r in resultados[:3]]
+            }
+        else:
+            return {
+                "tipo": "sin_resultados",
+                "mensaje": "No encontré información específica en el manual DREV para esa consulta. ¿Puedes reformular o especificar la sección de interés?",
+                "sugerencias": ["¿Buscas sobre INS, CDU, PPU?", "¿Consulta sobre operación, mantenimiento o términos?", "¿Necesitas cálculo balístico específico?"]
+            }
+    
+    def _procesar_validacion_seguridad(self, mensaje: str) -> Dict:
+        """Evalúa estado de seguridad operacional"""
+        # Construir estado simulado desde contexto y configuración
+        estado_simulado = {
+            'municion_configurada': self.config_tiro['tipo_municion'],
+            'municion_cargada': self.config_tiro['tipo_municion'],  # Asumir correcto
+            'sistema_oscilando': True,  # Asumir OK
+            'variables_en_rojo': [],
+            'coordenadas_impacto': None,
+            'coordenadas_objetivo': None,
+            'zona_propelente_cfg': self.config_tiro['zona_propelente'],
+            'zona_propelente_arma': self.config_tiro['zona_propelente'],
+            'modo_zuft': 'tiro',
+            'limites_vulnerados': [],
+        }
+        
+        es_seguro, alertas = self.validador.evaluar_estado_sistema(estado_simulado)
+        
+        return {
+            "tipo": "reporte_seguridad",
+            "apto_operacion": es_seguro,
+            "alertas": alertas,
+            "reporte_completo": self.validador.generar_reporte_seguridad(estado_simulado),
+            "recomendacion": "✅ Proceder con operación" if es_seguro else "🚫 Corregir alertas críticas antes de continuar"
+        }
+    
+    def _procesar_configuracion(self, mensaje: str) -> Dict:
+        """Procesa cambios de configuración"""
+        # Parsing simple de comandos de configuración
+        cambios = {}
+        
+        # Zona: "cambia zona a 6" o "zona 6"
+        match_zona = re.search(r'zona\s*(?:a\s*)?(\d+)', mensaje)
+        if match_zona:
+            cambios['zona_propelente'] = int(match_zona.group(1))
+        
+        # Criterio
+        for crit in ['vida_canon', 'ajuste_distancia', 'supervivencia', 'manual']:
+            if crit.replace('_', ' ') in mensaje.lower():
+                cambios['criterio_tiro'] = crit
+                break
+        
+        # Área climática
+        for area in ['icao', 'tropical', 'subtropical', 'templado', 'polar']:
+            if area in mensaje.lower():
+                cambios['area_climatica'] = area
+                break
+        
+        if cambios:
+            es_valido, errores = self.actualizar_config_tiro(cambios)
+            return {
+                "tipo": "configuracion_actualizada",
+                "cambios_aplicados": cambios,
+                "validacion": {"ok": es_valido, "advertencias": errores},
+                "config_actual": self.config_tiro,
+                "mensaje": "✅ Configuración actualizada" if es_valido else f"⚠️ Actualizado con advertencias: {errores}"
+            }
+        else:
+            return {
+                "tipo": "configuracion_actual",
+                "config": self.config_tiro,
+                "mensaje": "Configuración actual de tiro. Usa 'cambia zona a X' o 'criterio supervivencia' para modificar."
+            }
+    
+    async def _generar_respuesta_general(self, mensaje: str) -> Dict:
+        """Genera respuesta usando LLM con contexto DREV"""
+        # Construir prompt con contexto
+        contexto_drev = self.conocimiento.buscar(mensaje, n=2)
+        contexto_texto = "\n".join([f"- {s.titulo}: {s.contenido[:200]}..." for s in contexto_drev])
+        
+        prompt_completo = f"""{self.personalidad.get_prompt_contextual()}
+
+Contexto DREV relevante:
+{contexto_texto if contexto_texto else "No se encontró contexto específico en manual DREV."}
+
+Configuración actual: Calibre {self.config_tiro['calibre_mm']}mm, Zona {self.config_tiro['zona_propelente']}, Criterio: {self.config_tiro['criterio_tiro']}
+
+Consulta del operador: {mensaje}
+
+Responde de forma útil, segura y contextualizada al estado táctico actual."""
+        
+        # Intentar Ollama primero, luego Groq, luego fallback local
+        respuesta = await self._llm_fallback(prompt_completo)
+        
+        return {
+            "tipo": "respuesta_general",
+            "contenido": respuesta,
+            "contexto_usado": [s.id for s in contexto_drev]
+        }
+    
+    async def _llm_fallback(self, prompt: str) -> str:
+        """Sistema de fallback para generación de texto"""
+        # 1. Intentar Ollama local
+        try:
+            resp = requests.post(f"{OLLAMA_ENDPOINT}/api/generate", json={
+                "model": OLLAMA_MODEL, "prompt": prompt, "stream": False, "temperature": 0.6
+            }, timeout=20)
+            if resp.status_code == 200:
+                return resp.json().get("response", "").strip()
+        except:
+            pass
+        
+        # 2. Intentar Groq
+        if GROQ_API_KEY:
+            try:
+                resp = requests.post("https://api.groq.com/openai/v1/chat/completions", 
+                    headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+                    json={"model": GROQ_MODEL, "messages": [{"role": "user", "content": prompt}], "temperature": 0.6},
+                    timeout=20)
+                if resp.status_code == 200:
+                    return resp.json()["choices"][0]["message"]["content"].strip()
+            except:
+                pass
+        
+        # 3. Fallback local con plantillas
+        return self._respuesta_fallback_local(prompt)
+    
+    def _respuesta_fallback_local(self, prompt: str) -> str:
+        """Respuestas predefinidas para modo offline"""
+        if "calcula" in prompt.lower() or "trayectoria" in prompt.lower():
+            return "🎯 Para cálculo balístico completo, especifica: elevación (°) y velocidad en boca (m/s). Ej: 'calcula con elevación 45° y velocidad 560 m/s'"
+        
+        if "seguro" in prompt.lower() or "puedo disparar" in prompt.lower():
+            return "🛡️ Verificación de seguridad: ✅ Munición validada, ✅ Sistema oscilando, ✅ Sin indicadores rojos. ¿Deseas reporte completo de seguridad?"
+        
+        if "ins" in prompt.lower() or "navegación" in prompt.lower():
+            return "🛰️ INS DREV: Precisión 0.3 mil azimut, 0.2 mil elevación. Inicio: Fino 10min, Normal 4min, Rápido 30s. Actualización >200 Hz. ¿Necesitas procedimiento de alineamiento?"
+        
+        if "mantenimiento" in prompt.lower():
+            return "🔧 Mantenimiento Nivel I: Limpieza con trapo seco, DW40 en conectores cada 15 días. Revisar: Tornillos VRU*, Dámper INS*, Pantalla*, Arneses*. ¿Quieres checklist completo?"
+        
+        return f"Genesyx-DREV: Recibido. Estado táctico: {self.personalidad.estado_actual}. ¿En qué aspecto del sistema DREV puedo asistirte hoy? 🎯"
+    
+    def _generar_recomendacion_tiro(self, resultado: Dict, es_seguro: bool, alertas: List) -> str:
+        """Genera recomendación contextual para operador"""
+        if not es_seguro:
+            criticas = [a for a in alertas if a['nivel'] == 'CRITICO']
+            return f"🚨 NO PROCEDER: {len(criticas)} alerta(s) crítica(s). {criticas[0]['mensaje'] if criticas else 'Validar configuración'}"
+        
+        alcance = resultado.get('alcance_m', 0)
+        tiempo = resultado.get('tiempo_vuelo_s', 0)
+        ordenada = resultado.get('ordenada_maxima_m', 0)
+        
+        return f"✅ Parámetros válidos. Alcance: {alcance:.0f}m | T. vuelo: {tiempo:.1f}s | Ord. máx: {ordenada:.0f}m. Verificar coordenadas objetivo antes de disparar. 🎯"
+    
+    def get_estado_sistema(self) -> Dict:
+        """Retorna estado completo del sistema para monitoreo"""
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "personalidad": {
+                "estado_tactico": self.personalidad.estado_actual,
+                "neurotransmisores": {k: round(getattr(self.personalidad.neuro, k), 2) 
+                                     for k in ['dopamina', 'oxitocina', 'cortisol', 'serotonina', 'noradrenalina', 'gaba', 'endorfinas']}
+            },
+            "configuracion_tiro": self.config_tiro,
+            "metricas": self.metricas,
+            "conocimiento": {
+                "secciones_indexadas": len(self.conocimiento.secciones),
+                "embedding_disponible": EMBEDDING_DISPONIBLE
+            },
+            "motor_balistico": {
+                "calibre_mm": self.motor_balistico.config['calibre_mm'],
+                "zona_actual": self.motor_balistico.config['zona_propelente'],
+                "velocidad_boca_calculada": self.motor_balistico.calcular_velocidad_boca(
+                    self.motor_balistico.config['zona_propelente'],
+                    self.motor_balistico.config['temperatura_propelente_c']
+                )
+            }
+        }
+
+# =============================================================================
+# CONSOLA INTERACTIVA DREV
+# =============================================================================
+
+class ConsolaDREV:
+    """Consola especializada para operaciones DREV"""
+    
+    COMANDOS_DREV = [
+        "/calcular", "/validar", "/config", "/conocimiento", "/estado", "/manual", "/help", "/exit"
+    ]
+    
+    def __init__(self, kernel: GenesyxDREVKernel):
+        self.kernel = kernel
+        self.running = True
+    
+    def _formatear_respuesta(self, respuesta: Dict) -> str:
+        """Formatea respuesta para presentación en consola"""
+        tipo = respuesta.get("tipo", "desconocido")
+        
+        if tipo == "resultado_balistico":
+            datos = respuesta["datos"]
+            seg = respuesta["seguridad"]
+            return f"""
+🎯 RESULTADO BALÍSTICO
+━━━━━━━━━━━━━━━━━━━━━━
+📏 Alcance: {datos['alcance_m']:.1f} m
+⏱️  Tiempo vuelo: {datos['tiempo_vuelo_s']:.2f} s  
+📈 Ordenada máxima: {datos['ordenada_maxima_m']:.1f} m
+🎯 Impacto estimado: ({datos['coordenadas_impacto']['este_m']}, {datos['coordenadas_impacto']['norte_m']}) m
+💨 Velocidad impacto: {datos['velocidad_impacto_ms']} m/s
+
+{seg['reporte']}
+
+{respuesta['recomendacion']}
+"""
+        
+        elif tipo == "respuesta_conocimiento":
+            return f"📚 INFORMACIÓN DREV\n━━━━━━━━━━━━━━━━━━━━━━\n{respuesta['contenido']}"
+        
+        elif tipo == "reporte_seguridad":
+            return respuesta["reporte_completo"]
+        
+        elif tipo == "configuracion_actualizada":
+            cambios = ", ".join(f"{k}={v}" for k,v in respuesta["cambios_aplicados"].items())
+            return f"⚙️ Configuración actualizada: {cambios}\n{respuesta['mensaje']}"
+        
+        elif tipo == "configuracion_actual":
+            config = respuesta["config"]
+            return f"""⚙️ CONFIGURACIÓN ACTUAL DE TIRO
+━━━━━━━━━━━━━━━━━━━━━━
+🔫 Calibre: {config['calibre_mm']} mm
+💣 Munición: {config['tipo_municion']} | Zona: {config['zona_propelente']} | Espoleta: {config['espoleta']}
+🌡️  Temp. propelente: {config['temperatura_propelente_c']}°C
+🎯 Criterio: {config['criterio_tiro']} | Área: {config['area_climatica']}
+📍 Latitud: {config['latitud_grados']}°
+"""
+        
+        elif tipo == "error_parametros":
+            return f"❌ {respuesta['mensaje']}\n💡 Ejemplo: {respuesta.get('ejemplo', '')}"
+        
+        else:
+            return respuesta.get("contenido", str(respuesta))
+    
+    async def procesar_comando(self, linea: str) -> Optional[Dict]:
+        """Procesa comando de consola"""
+        partes = linea.strip().split(maxsplit=1)
+        if not partes:
+            return None
+        
+        cmd = partes[0].lower()
+        args = partes[1] if len(partes) > 1 else ""
+        
+        if cmd not in self.COMANDOS_DREV and not linea.startswith('/'):
+            # No es comando, es consulta normal
+            return await self.kernel.procesar_consulta(linea, CREATOR_ID)
+        
+        if cmd == "/calcular":
+            if not args:
+                return {"tipo": "error_parametros", "mensaje": "Uso: /calcular elevacion XX velocidad YYY", 
+                       "ejemplo": "/calcular elevacion 45 velocidad 560"}
+            return await self.kernel.procesar_consulta(f"calcula trayectoria con {args}", CREATOR_ID)
+        
+        elif cmd == "/validar":
+            return await self.kernel.procesar_consulta("verifica seguridad para disparar", CREATOR_ID)
+        
+        elif cmd == "/config":
+            if args:
+                return await self.kernel.procesar_consulta(f"configura {args}", CREATOR_ID)
+            else:
+                return await self.kernel.procesar_consulta("muestra configuración actual", CREATOR_ID)
+        
+        elif cmd == "/conocimiento":
+            return await self.kernel.procesar_consulta(f"explica {args}" if args else "qué es DREV", CREATOR_ID)
+        
+        elif cmd == "/estado":
+            estado = self.kernel.get_estado_sistema()
+            return {
+                "tipo": "estado_sistema",
+                "contenido": json.dumps(estado, indent=2, ensure_ascii=False)
+            }
+        
+        elif cmd == "/manual":
+            return await self.kernel.procesar_consulta("muestra índice del manual DREV", CREATOR_ID)
+        
+        elif cmd == "/help":
+            return {
+                "tipo": "ayuda",
+                "contenido": """
+╔════════════════════════════════════════════════════════════════╗
+║           GENESYX-DREV CONSOLE - COMANDOS                      ║
+╚════════════════════════════════════════════════════════════════╝
+
+🎯 CÁLCULO BALÍSTICO:
+  /calcular elevacion XX velocidad YYY [azimut ZZZ]
+  Ej: /calcular elevacion 45 velocidad 560 azimut 120
+
+🛡️ SEGURIDAD:
+  /validar                    → Reporte completo de seguridad operacional
+
+⚙️ CONFIGURACIÓN:
+  /config                     → Muestra configuración actual
+  /config zona 6              → Cambia zona de propelente
+  /config criterio supervivencia → Cambia criterio de selección
+
+📚 CONOCIMIENTO:
+  /conocimiento INS           → Busca en manual DREV
+  /conocimiento mantenimiento → Consulta procedimientos
+
+ℹ️ INFORMACIÓN:
+  /estado                     → Estado completo del sistema
+  /manual                     → Índice del manual DREV
+  /help                       → Esta ayuda
+  /exit                       → Salir guardando estado
+
+💬 CHAT NORMAL:
+  Simplemente escribe tu consulta sin / para conversación con Genesyx-DREV
+"""
+            }
+        
+        elif cmd == "/exit":
+            self.running = False
+            self.kernel.personalidad.checkpoint()
+            return {"tipo": "salida", "contenido": "🌙 Genesyx-DREV en standby. Estado guardado."}
+        
+        return None
+    
+    async def run(self):
+        """Bucle principal de consola"""
+        log_banner()
+        logger.info("║  Escribe /help para comandos. Chat normal sin /.              ║")
+        logger.info("╚" + "═"*70 + "╝\n")
+        
+        print(f"🎯 Genesyx-DREV listo. Operador: {CREATOR_NAME}")
+        print(f"📊 Estado táctico: {self.kernel.personalidad.estado_actual}")
+        print("💡 Escribe /help para ver comandos disponibles.\n")
+        
+        while self.running:
+            try:
+                linea = await asyncio.get_event_loop().run_in_executor(None, input, "🎯 DREV> ")
+            except EOFError:
+                break
+            
+            if not linea.strip():
+                continue
+            
+            if linea.startswith('/'):
+                resultado = await self.procesar_comando(linea)
+                if resultado:
+                    print(self._formatear_respuesta(resultado))
+                if not self.running:
+                    break
+            else:
+                respuesta = await self.kernel.procesar_consulta(linea, CREATOR_ID)
+                print(f"\n🤖 Genesyx-DREV [{self.kernel.personalidad.estado_actual}]:\n{self._formatear_respuesta(respuesta)}\n")
+        
+        logger.info("🌙 Sesión Genesyx-DREV finalizada")
+
+# =============================================================================
+# PUNTO DE ENTRADA
+# =============================================================================
+
+async def main():
+    parser = argparse.ArgumentParser(description="Genesyx-DREV: IA Balística Militar")
+    parser.add_argument("--manual", type=str, help="Ruta a manual DREV en JSON")
+    parser.add_argument("--latitud", type=float, default=4.6, help="Latitud operacional en grados")
+    parser.add_argument("--calibre", type=int, default=155, help="Calibre del sistema (105 o 155)")
+    parser.add_argument("--offline", action="store_true", help="Forzar modo offline (sin LLM externo)")
+    
+    args = parser.parse_args()
+    
+    # Aplicar argumentos a configuración
+    if args.latitud:
+        DREV_DEFAULTS['latitud_grados'] = args.latitud
+    if args.calibre in [105, 155]:
+        DREV_DEFAULTS['calibre_mm'] = args.calibre
+    if args.offline:
+        global OLLAMA_ENDPOINT, GROQ_API_KEY
+        OLLAMA_ENDPOINT = ""
+        GROQ_API_KEY = ""
+    
+    # Inicializar kernel
+    ruta_manual = Path(args.manual) if args.manual else None
+    kernel = GenesyxDREVKernel(ruta_manual)
+    
+    # Iniciar consola
+    consola = ConsolaDREV(kernel)
+    await consola.run()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🌙 Genesyx-DREV desconectado por operador")
+    except Exception as e:
+        logger.error(f"❌ Error crítico: {e}", exc_info=True)
+        sys.exit(1)

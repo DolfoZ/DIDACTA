@@ -1,0 +1,216 @@
+ALGORITMOS DEL SISTEMA LABORATORIO, MOTOR DE CALCULO BALISTICO Y VALIDACION
+
+1. Algoritmo del Entorno Balístico (Atmosfera ISA y Entorno Geodésico)
+Basado en el ICAO Doc 7488, los datos de Atmosfera.csv y el efecto Coriolis (rotación de la Tierra).
+import math
+import numpy as np
+from scipy.integrate import solve_ivp
+from scipy.interpolate import interp1d
+
+class EntornoBalistico:
+    def __init__(self, latitud_grados=14.08, viento_frente=0.0, viento_cruzado=0.0):
+        # Constantes WGS-84 e ISA
+        self.latitud = math.radians(latitud_grados)
+        self.omega_tierra = 7.2921159e-5  # rad/s
+        self.radio_tierra = 6371000.0     # m
+        self.g0 = 9.80665                 # m/s^2
+        self.R_gas = 287.05               # J/(kg*K)
+        self.L = 0.0065                   # Gradiente térmico K/m
+        self.T0 = 288.15                  # K (15°C)
+        self.P0 = 101325.0                # Pa
+        
+        self.viento_x = viento_frente
+        self.viento_z = viento_cruzado
+
+    def gravedad(self, altitud):
+        """Gravedad variable con la altitud."""
+        return self.g0 * (self.radio_tierra / (self.radio_tierra + altitud)) ** 2
+
+    def atmosfera(self, altitud):
+        """Modelo Atmosférico Estándar (ISA). Retorna densidad y velocidad del sonido."""
+        if altitud < 0: altitud = 0
+        if altitud < 11000:  # Troposfera
+            T = self.T0 - self.L * altitud
+            P = self.P0 * (T / self.T0) ** (self.g0 / (self.L * self.R_gas))
+        else:  # Estratosfera
+            T = 216.65
+            P_11k = self.P0 * (216.65 / self.T0) ** (self.g0 / (self.L * self.R_gas))
+            P = P_11k * math.exp(-self.g0 * (altitud - 11000) / (self.R_gas * T))
+            
+        densidad = P / (self.R_gas * T)
+        vel_sonido = math.sqrt(1.4 * self.R_gas * T)
+        return densidad, vel_sonido
+
+2. Algoritmo Aerodinámico y Base de Datos de Obuses (105mm y 155mm)
+Basado en TM 43-0001-28, la Tabla G7 de McCoy y los ajustes documentados en referencias_y_fuentes.docx.
+
+class Proyectil:
+    def __init__(self, nombre, calibre_m, masa_kg, v0_base, factor_forma):
+        self.nombre = nombre
+        self.calibre = calibre_m
+        self.area = math.pi * (calibre_m / 2)**2
+        self.masa = masa_kg
+        self.v0 = v0_base
+        self.i = factor_forma
+
+        # Tabla G7 de Arrastre (Mach vs Cd) extraída de los documentos
+        mach_data = [0.0, 0.7, 0.85, 0.95, 1.0, 1.05, 1.1, 1.2, 1.5, 2.0, 3.0]
+        cd_data = [0.12, 0.12, 0.135, 0.20, 0.35, 0.38, 0.375, 0.355, 0.30, 0.24, 0.19]
+        self.curva_arrastre = interp1d(mach_data, cd_data, bounds_error=False, fill_value=(0.12, 0.15))
+
+    def get_cd(self, mach):
+        return self.curva_arrastre(mach) * self.i
+
+# Base de datos basada en los manuales
+CATALOGO_MUNICION = {
+    # Para Obús M102 (105mm)
+    "105_HE_M1": Proyectil("105mm HE M1", 0.105, 14.97, 480.0, 1.042),
+    "105_ILUM_M314": Proyectil("105mm ILUM M314A3", 0.105, 14.77, 445.0, 1.02),
+    
+    # Para Obús M198 (155mm) - Velocidades corregidas según FT 155-AM-2
+    "155_HE_M107_M4A2": Proyectil("155mm HE M107 (WB M4A2)", 0.155, 43.9, 565.0, 1.00),
+    "155_HE_M107_M119": Proyectil("155mm HE M107 (RB M119A2)", 0.155, 43.9, 685.0, 1.00),
+    "155_HERA_M549": Proyectil("155mm HERA M549A1", 0.155, 43.5, 600.0, 1.05)
+}
+
+3. Motor de Ecuaciones de Movimiento (Simulador de Trayectoria)
+Integra el modelo de Masa Puntual Modificada (3-DOF avanzado / Pseudo 6-DOF) basado en simulador_12dof.py y el método Runge-Kutta 45 de scipy
+class MotorBalistico:
+    def __init__(self, proyectil, entorno):
+        self.proy = proyectil
+        self.env = entorno
+
+    def derivadas(self, t, estado):
+        # Estado: [x, y, z, vx, vy, vz] (z es altitud)
+        x, y, z, vx, vy, vz = estado
+        
+        # Detener la simulación si toca el suelo
+        if z < 0 and t > 0.1:
+            return [0, 0, 0, 0, 0, 0]
+
+        densidad, vel_sonido = self.env.atmosfera(z)
+        gravedad = self.env.gravedad(z)
+        
+        # Velocidad relativa al viento
+        vr_x = vx - self.env.viento_x
+        vr_y = vy - self.env.viento_z
+        vr_z = vz
+        v_mag = math.sqrt(vr_x**2 + vr_y**2 + vr_z**2)
+        mach = v_mag / vel_sonido
+        
+        # Fuerza de arrastre (Drag)
+        cd = self.proy.get_cd(mach)
+        f_arrastre = 0.5 * densidad * v_mag**2 * self.proy.area * cd
+        ax_d = -(f_arrastre * (vr_x / v_mag)) / self.proy.masa
+        ay_d = -(f_arrastre * (vr_y / v_mag)) / self.proy.masa
+        az_d = -(f_arrastre * (vr_z / v_mag)) / self.proy.masa
+
+        # Efecto Coriolis (Deriva y alcance por rotación de la Tierra)
+        coriolis_x = 2 * self.env.omega_tierra * (vy * math.sin(self.env.latitud) - vz * math.cos(self.env.latitud))
+        coriolis_y = -2 * self.env.omega_tierra * vx * math.sin(self.env.latitud)
+        coriolis_z = 2 * self.env.omega_tierra * vx * math.cos(self.env.latitud)
+
+        # Aceleraciones totales
+        ax = ax_d + coriolis_x
+        ay = ay_d + coriolis_y
+        az = az_d - gravedad + coriolis_z
+
+        return [vx, vy, vz, ax, ay, az]
+
+    def simular_tiro(self, angulo_elevacion_mils, angulo_azimut_mils=0):
+        elev_rad = angulo_elevacion_mils * (math.pi / 3200)
+        azim_rad = angulo_azimut_mils * (math.pi / 3200)
+        
+        # Condiciones iniciales de velocidad
+        v0_x = self.proy.v0 * math.cos(elev_rad) * math.cos(azim_rad)
+        v0_y = self.proy.v0 * math.cos(elev_rad) * math.sin(azim_rad)
+        v0_z = self.proy.v0 * math.sin(elev_rad)
+        
+        estado_inicial = [0.0, 0.0, 0.0, v0_x, v0_y, v0_z]
+        
+        # Evento de impacto para detener el integrador
+        def evento_impacto(t, y): return y[2]
+        evento_impacto.terminal = True
+        evento_impacto.direction = -1
+
+        sol = solve_ivp(
+            self.derivadas,
+            [0, 150],  # Max 150 segundos de vuelo
+            estado_inicial,
+            method='RK45',
+            events=evento_impacto,
+            max_step=0.1
+        )
+        return sol
+
+4. Algoritmo de Generación de Tablas de Tiro (Validación FT)
+Utiliza el método de bisección/secante extraído de generador_tablas_ft_v2.py para encontrar la Elevación del Cuadrante (QE) exacta para golpear un blanco a una distancia específica.class GeneradorTablasFT:
+    def __init__(self, motor):
+        self.motor = motor
+
+    def encontrar_qe_para_alcance(self, alcance_objetivo, tolerancia=2.0):
+        """Busca el ángulo (en milésimas) necesario para lograr un alcance específico."""
+        qe_min = 0.0
+        qe_max = 800.0  # Max elevación ~45 grados
+        
+        # Bisección para encontrar el QE (Quadrant Elevation)
+        for _ in range(25):
+            qe_mid = (qe_min + qe_max) / 2.0
+            sol = self.motor.simular_tiro(qe_mid)
+            alcance_actual = math.sqrt(sol.y[0][-1]**2 + sol.y[1][-1]**2)
+            
+            error = alcance_actual - alcance_objetivo
+            if abs(error) < tolerancia:
+                break
+                
+            if error < 0:
+                qe_min = qe_mid # Quedó corto, subir cañón
+            else:
+                qe_max = qe_mid # Se pasó, bajar cañón
+                
+        # Extraer métricas finales
+        tiempo_vuelo = sol.t[-1]
+        deriva = sol.y[1][-1]
+        altura_max = max(sol.y[2])
+        return qe_mid, tiempo_vuelo, deriva, altura_max
+
+    def generar_tabla(self, distancias):
+        tabla = []
+        for dist in distancias:
+            qe, t, deriva, h_max = self.encontrar_qe_para_alcance(dist)
+            tabla.append({
+                "Distancia (m)": dist,
+                "Elevación (mils)": round(qe, 1),
+                "Tiempo (s)": round(t, 1),
+                "Deriva (m)": round(deriva, 2),
+                "Altura Máx (m)": round(h_max, 1)
+            })
+        return tabla
+
+5. Script de Ejecución y Validación
+Este fragmento orquesta todo el sistema, permitiéndote generar la validación exacta requerida por la bitácora de los documentos.if __name__ == "__main__":
+    # Inicializar el entorno (Honduras lat: 14.08, clima estándar)
+    entorno = EntornoBalistico(latitud_grados=14.08)
+    
+    # === PRUEBA 1: Obús M102 (105mm) ===
+    print("--- GENERANDO TABLA DE TIRO: 105mm HE M1 ---")
+    proy_105 = CATALOGO_MUNICION["105_HE_M1"]
+    motor_105 = MotorBalistico(proy_105, entorno)
+    generador_105 = GeneradorTablasFT(motor_105)
+    
+    distancias_105 = [2000, 3000, 4000, 5000, 6000]
+    resultados_105 = generador_105.generar_tabla(distancias_105)
+    for res in resultados_105:
+        print(res)
+
+    # === PRUEBA 2: Obús M198 (155mm) ===
+    print("\n--- GENERANDO TABLA DE TIRO: 155mm HE M107 (Carga M119A2) ---")
+    proy_155 = CATALOGO_MUNICION["155_HE_M107_M119"]
+    motor_155 = MotorBalistico(proy_155, entorno)
+    generador_155 = GeneradorTablasFT(motor_155)
+    
+    distancias_155 = [5000, 8000, 10000, 12000, 15000]
+    resultados_155 = generador_155.generar_tabla(distancias_155)
+    for res in resultados_155:
+        print(res)
+

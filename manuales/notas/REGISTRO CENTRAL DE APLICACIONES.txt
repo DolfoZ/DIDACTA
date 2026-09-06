@@ -1,0 +1,67 @@
+ REGISTRO CENTRAL DE APLICACIONES
+
+
+// src/apps/registry.ts — El registro que conecta todas las apps con sus componentes reales
+import { lazy } from 'react';
+
+export interface AppDefinition {
+  id: string;
+  name: string;
+  icon: string; // Lucide icon name
+  category: 'system' | 'ballistics' | 'communications' | 'logistics' | 'development' | 'productivity' | 'multimedia' | 'security' | 'utilities';
+  component: React.LazyExoticComponent<React.ComponentType<any>>;
+  defaultSize: { width: number; height: number };
+  minSize?: { width: number; height: number };
+  canOpenMultiple?: boolean;
+}
+
+export const APP_REGISTRY: AppDefinition[] = [
+  // === SISTEMA ===
+  { id: 'terminal', name: 'Terminal ARES', icon: 'Terminal', category: 'system', component: lazy(() => import('@/apps/terminal')), defaultSize: { width: 800, height: 500 }, minSize: { width: 400, height: 300 }, canOpenMultiple: true },
+  { id: 'files', name: 'Archivos', icon: 'FolderOpen', category: 'system', component: lazy(() => import('@/apps/files')), defaultSize: { width: 900, height: 600 }, minSize: { width: 500, height: 400 }, canOpenMultiple: true },
+  { id: 'settings', name: 'Configuración', icon: 'Settings', category: 'system', component: lazy(() => import('@/apps/settings')), defaultSize: { width: 800, height: 600 } },
+  { id: 'system-monitor', name: 'Monitor del Sistema', icon: 'Activity', category: 'system', component: lazy(() => import('@/apps/system-monitor')), defaultSize: { width: 900, height: 600 } },
+  { id: 'process-manager', name: 'Gestor de Procesos', icon: 'Cpu', category: 'system', component: lazy(() => import('@/apps/process-manager')), defaultSize: { width: 700, height: 500 } },
+
+  // === BALÍSTICA ===
+  { id: 'drev-lab', name: 'DREV Lab', icon: 'Crosshair', category: 'ballistics', component: lazy(() => import('@/apps/drev-lab')), defaultSize: { width: 1400, height: 900 }, minSize: { width: 1000, height: 700 } },
+  { id: 'drev-3d', name: 'DREV 3D Simulador', icon: 'Box', category: 'ballistics', component: lazy(() => import('@/apps/drev-3d')), defaultSize: { width: 1200, height: 800 } },
+  { id: 'firing-tables', name: 'Tablas de Tiro', icon: 'Table', category: 'ballistics', component: lazy(() => import('@/apps/firing-tables')), defaultSize: { width: 1000, height: 700 } },
+  { id: 'genesyx', name: 'GENESYX-DREV IA', icon: 'Brain', category: 'ballistics', component: lazy(() => import('@/apps/genesyx')), defaultSize: { width: 900, height: 700 } },
+
+  // === COMUNICACIONES ===
+  { id: 'santa-barbara', name: 'Santa Bárbara Comms', icon: 'Radio', category: 'communications', component: lazy(() => import('@/apps/santa-barbara-comms')), defaultSize: { width: 1400, height: 900 }, minSize: { width: 1000, height: 700 } },
+  { id: 'mumble-ptt', name: 'PTT Red de Fuego', icon: 'Mic', category: 'communications', component: lazy(() => import('@/apps/comms-ptt')), defaultSize: { width: 800, height: 600 } },
+  { id: 'tactical-chat', name: 'Chat Táctico', icon: 'MessageSquare', category: 'communications', component: lazy(() => import('@/apps/tactical-chat')), defaultSize: { width: 700, height: 500 }, canOpenMultiple: true },
+
+  // === LOGÍSTICA ===
+  { id: 'logistics', name: 'Logística de Artillería', icon: 'Truck', category: 'logistics', component: lazy(() => import('@/apps/logistics')), defaultSize: { width: 1300, height: 800 } },
+  { id: 'inventory', name: 'Control de Inventario', icon: 'Package', category: 'logistics', component: lazy(() => import('@/apps/inventory')), defaultSize: { width: 1000, height: 700 } },
+  { id: 'personnel', name: 'Gestión de Personal', icon: 'Users', category: 'logistics', component: lazy(() => import('@/apps/personnel')), defaultSize: { width: 1000, height: 700 } },
+
+  // === DESARROLLO ===
+  { id: 'code-server', name: 'VS Code', icon: 'Code', category: 'development', component: lazy(() => import('@/apps/code-server')), defaultSize: { width: 1200, height: 800 } },
+  { id: 'ghidra', name: 'Ghidra SRE', icon: 'Bug', category: 'development', component: lazy(() => import('@/apps/ghidra')), defaultSize: { width: 1300, height: 850 } },
+  { id: 'hoppscotch', name: 'Hoppscotch API', icon: 'Send', category: 'development', component: lazy(() => import('@/apps/hoppscotch')), defaultSize: { width: 1100, height: 700 } },
+
+  // === SEGURIDAD ===
+  { id: 'proxmox', name: 'Proxmox Console', icon: 'Server', category: 'security', component: lazy(() => import('@/apps/proxmox')), defaultSize: { width: 1100, height: 700 } },
+  { id: 'firewall', name: 'Firewall', icon: 'Shield', category: 'security', component: lazy(() => import('@/apps/firewall')), defaultSize: { width: 800, height: 600 } },
+  { id: 'vpn', name: 'VPN WireGuard', icon: 'Lock', category: 'security', component: lazy(() => import('@/apps/vpn')), defaultSize: { width: 700, height: 500 } },
+
+  // === PRODUCTIVIDAD ===
+  { id: 'text-editor', name: 'Editor de Texto', icon: 'FileText', category: 'productivity', component: lazy(() => import('@/apps/text-editor')), defaultSize: { width: 800, height: 600 }, canOpenMultiple: true },
+  { id: 'calculator', name: 'Calculadora', icon: 'Calculator', category: 'productivity', component: lazy(() => import('@/apps/calculator')), defaultSize: { width: 350, height: 500 }, canOpenMultiple: true },
+  { id: 'calendar', name: 'Calendario', icon: 'Calendar', category: 'productivity', component: lazy(() => import('@/apps/calendar')), defaultSize: { width: 800, height: 600 } },
+  { id: 'notes', name: 'Notas', icon: 'StickyNote', category: 'productivity', component: lazy(() => import('@/apps/notes')), defaultSize: { width: 600, height: 500 }, canOpenMultiple: true },
+  { id: 'browser', name: 'Navegador', icon: 'Globe', category: 'productivity', component: lazy(() => import('@/apps/browser')), defaultSize: { width: 1200, height: 800 }, canOpenMultiple: true },
+
+  // === MULTIMEDIA ===
+  { id: 'image-viewer', name: 'Visor de Imágenes', icon: 'Image', category: 'multimedia', component: lazy(() => import('@/apps/image-viewer')), defaultSize: { width: 800, height: 600 }, canOpenMultiple: true },
+  { id: 'media-player', name: 'Reproductor', icon: 'Play', category: 'multimedia', component: lazy(() => import('@/apps/media-player')), defaultSize: { width: 700, height: 500 } },
+
+  // === UTILIDADES ===
+  { id: 'converter', name: 'Conversor de Unidades', icon: 'Repeat', category: 'utilities', component: lazy(() => import('@/apps/converter')), defaultSize: { width: 500, height: 400 } },
+  { id: 'manual-viewer', name: 'Manual DREV', icon: 'BookOpen', category: 'utilities', component: lazy(() => import('@/apps/manual-viewer')), defaultSize: { width: 1000, height: 700 } },
+  { id: 'report-generator', name: 'Generador de Reportes', icon: 'FileSpreadsheet', category: 'utilities', component: lazy(() => import('@/apps/report-generator')), defaultSize: { width: 800, height: 600 } },
+];

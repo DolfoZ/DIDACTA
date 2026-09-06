@@ -1,0 +1,371 @@
+BLOQUE 2: SISTEMA DE COMUNICACIONES SANTA BÁRBARA INTEGRADO
+Tu archivo sistema de comunicaciones.txt contiene una interfaz HTML completa del sistema Santa Bárbara. La convierto en un componente React nativo de ARES OS, manteniendo su estética táctica pero integrándola con Mumble PTT real y WebSocket para mensajería en tiempo real.
+
+// src/apps/santa-barbara-comms/index.tsx
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { useOSStore } from '@/store/osStore';
+
+// Tipos del sistema de comunicaciones
+interface TacticalUnit {
+  id: string;
+  name: string;
+  role: string;
+  status: 'ONLINE' | 'DEGRADED' | 'OFFLINE' | 'READY' | 'FIRING' | 'RELOAD';
+  callSign: string;
+  grid: string;
+  type: 'cp' | 'fo' | 'bat' | 'log';
+  guns?: number;
+  ammo?: number;
+}
+
+interface FireMission {
+  id: string;
+  target: string;
+  type: string;
+  rounds: number;
+  status: 'PENDING' | 'APPROVED' | 'EXECUTING' | 'COMPLETE' | 'REJECTED';
+  priority: 'EMERGENCY' | 'URGENT' | 'ROUTINE';
+  requestedBy: string;
+  requestTime: string;
+  assignedBat?: string;
+}
+
+// Datos iniciales de unidades tácticas
+const INITIAL_UNITS: Record<string, TacticalUnit> = {
+  cp: { id: 'cp', name: 'Puesto de Mando Alpha', role: 'Comando', status: 'ONLINE', callSign: 'EAGLE-06', grid: 'NK 456 789', type: 'cp' },
+  fo1: { id: 'fo1', name: 'FO Víbora — Sgto. Mendes', role: 'Observador', status: 'ONLINE', callSign: 'COBRA-11', grid: 'NK 462 795', type: 'fo' },
+  fo2: { id: 'fo2', name: 'FO Cuervo — Cbo. Silva', role: 'Observador', status: 'DEGRADED', callSign: 'RAVEN-03', grid: 'NK 450 780', type: 'fo' },
+  bat1: { id: 'bat1', name: '1ª Batería — 155mm M777', role: 'Fuego', status: 'READY', callSign: 'THUNDER-01', grid: 'NK 440 770', type: 'bat', guns: 6, ammo: 85 },
+  bat2: { id: 'bat2', name: '2ª Batería — 120mm L16', role: 'Fuego', status: 'RELOAD', callSign: 'THUNDER-02', grid: 'NK 442 768', type: 'bat', guns: 4, ammo: 42 },
+  log: { id: 'log', name: 'Unidad Logística Mula', role: 'Soporte', status: 'ONLINE', callSign: 'PACK-01', grid: 'NK 430 750', type: 'log' }
+};
+
+export default function SantaBarbaraComms() {
+  const { user } = useOSStore();
+  const [role, setRole] = useState<string>('cp');
+  const [encryption, setEncryption] = useState('AES-256-GCM');
+  const [units, setUnits] = useState(INITIAL_UNITS);
+  const [missions, setMissions] = useState<FireMission[]>([]);
+  const [messages, setMessages] = useState<Array<{ time: string; type: string; src: string; msg: string }>>([]);
+  const [jamming, setJamming] = useState(false);
+  const [activeChannel, setActiveChannel] = useState('cp-net');
+  const wsRef = useRef<WebSocket | null>(null);
+
+  // Conectar WebSocket al backend de comunicaciones
+  useEffect(() => {
+    const ws = new WebSocket(`wss://${window.location.host}/ws/comms`);
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      handleWSMessage(data);
+    };
+    wsRef.current = ws;
+
+    // Simulación de interferencia
+    const jammerInterval = setInterval(() => {
+      if (Math.random() > 0.92) {
+        setJamming(prev => !prev);
+        addMessage('sys', 'SYS', !jamming ? '🚨 JAMMING DETECTADO — Protocolo antiperturbación activo' : 'Interferencia neutralizada — Enlaces restaurados');
+      }
+    }, 12000);
+
+    addMessage('sys', 'SYS', '═══════════════════════════════════════');
+    addMessage('sys', 'SYS', 'SANTA BÁRBARA — SISTEMA INTEROPERABLE v2.0');
+    addMessage('sys', 'SYS', 'Protocolo EDXL-CAP | STANAG 4607 | MQTT-5');
+    addMessage('sys', 'SYS', 'Red inicializada — 6 nodos activos');
+
+    return () => {
+      ws.close();
+      clearInterval(jammerInterval);
+    };
+  }, []);
+
+  const handleWSMessage = (data: any) => {
+    switch (data.type) {
+      case 'fire_mission':
+        setMissions(prev => [...prev, data.mission]);
+        addMessage('fo', data.mission.requestedBy, `SOLICITUD DE FUEGO: ${data.mission.target} | ${data.mission.rounds} RDS ${data.mission.type}`);
+        break;
+      case 'mission_update':
+        setMissions(prev => prev.map(m => m.id === data.id ? { ...m, status: data.status } : m));
+        break;
+      case 'unit_update':
+        setUnits(prev => ({ ...prev, [data.id]: { ...prev[data.id], ...data.changes } }));
+        break;
+    }
+  };
+
+  const addMessage = (type: string, src: string, msg: string) => {
+    const time = new Date().toISOString().split('T')[1].split('.')[0] + 'Z';
+    setMessages(prev => [...prev.slice(-200), { time, type, src, msg }]);
+  };
+
+  const requestFireMission = (grid: string) => {
+    if (role !== 'fo') {
+      addMessage('warn', 'SYS', 'ACCESO DENEGADO: Solo FO puede designar objetivos');
+      return;
+    }
+    const id = `FM-${Math.floor(Math.random() * 9000 + 1000)}`;
+    const mission: FireMission = {
+      id, target: grid, type: 'HE', rounds: 3, status: 'PENDING',
+      priority: 'URGENT', requestedBy: units.fo1.callSign, requestTime: new Date().toISOString()
+    };
+    setMissions(prev => [...prev, mission]);
+    addMessage('fo', units.fo1.callSign, `🎯 OBJETIVO DESIGNADO: ${grid} — Solicitando fuego`);
+
+    // Enviar por WebSocket
+    wsRef.current?.send(JSON.stringify({
+      type: 'fire_mission',
+      channel: 'fire-net',
+      mission,
+      encrypted: encryption !== 'PLAIN'
+    }));
+  };
+
+  const approveMission = (id: string) => {
+    setMissions(prev => prev.map(m => m.id === id ? { ...m, status: 'APPROVED', assignedBat: 'bat1' } : m));
+    const mission = missions.find(m => m.id === id);
+    if (mission) {
+      addMessage('cp', units.cp.callSign, `MISIÓN ${id} APROBADA → Batería THUNDER-01`);
+      setUnits(prev => ({ ...prev, bat1: { ...prev.bat1, status: 'FIRING' } }));
+      // Simular ejecución
+      setTimeout(() => {
+        setMissions(prev => prev.map(m => m.id === id ? { ...m, status: 'COMPLETE' } : m));
+        setUnits(prev => ({ ...prev, bat1: { ...prev.bat1, status: 'RELOAD', ammo: Math.max(0, prev.bat1.ammo! - 6) } }));
+        addMessage('bat', 'THUNDER-01', `💥 FUEGO COMPLETADO — ${mission.rounds} RDS impactando ${mission.target}`);
+        setTimeout(() => {
+          setUnits(prev => ({ ...prev, bat1: { ...prev.bat1, status: 'READY', ammo: Math.min(100, prev.bat1.ammo! + 5) } }));
+        }, 5000);
+      }, 3000);
+    }
+  };
+
+  const rejectMission = (id: string) => {
+    setMissions(prev => prev.map(m => m.id === id ? { ...m, status: 'REJECTED' } : m));
+    addMessage('cp', units.cp.callSign, `MISIÓN ${id} RECHAZADA — Reevaluar objetivo`);
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-[#060a0f] text-[#e2e8f0] font-sans">
+      {/* Scanlines tácticos */}
+      <div className="fixed inset-0 pointer-events-none z-50 opacity-5"
+        style={{ background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,0.1) 3px)' }} />
+
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-2 bg-[#0b1019] border-b border-[#1a2435] z-10">
+        <div className="flex items-center gap-4">
+          <div className="text-[#00e5a0] font-mono font-black text-lg tracking-widest" 
+            style={{ textShadow: '0 0 15px rgba(0,229,160,0.4)' }}>
+            SANTA BÁRBARA
+          </div>
+          <span className="text-[#64748b] text-xs tracking-wider">SISTEMA DE COMUNICACIONES TÁCTICAS</span>
+          <div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 ${
+            jamming ? 'bg-[#ff2d5515] text-[#ff2d55] border border-[#ff2d5530]' : 'bg-[#00e5a015] text-[#00e5a0] border border-[#00e5a030]'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${jamming ? 'bg-[#ff2d55] animate-pulse' : 'bg-[#00e5a0]'}`} />
+            {jamming ? 'INTERFERENCIA' : 'RED OPERATIVA'}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <select value={role} onChange={e => setRole(e.target.value)}
+            className="bg-[#0f1522] border border-[#1a2435] rounded px-3 py-1 text-xs">
+            <option value="cp">Puesto de Mando (CP)</option>
+            <option value="fo">Observador Avanzado (FO)</option>
+            <option value="bat">Jefe de Batería</option>
+            <option value="log">Logística</option>
+          </select>
+          <select value={encryption} onChange={e => setEncryption(e.target.value)}
+            className="bg-[#0f1522] border border-[#1a2435] rounded px-3 py-1 text-xs">
+            <option value="AES-256-GCM">AES-256-GCM</option>
+            <option value="CHACHA20-POLY1305">CHACHA20-POLY1305</option>
+            <option value="PLAIN">Texto Plano (Pruebas)</option>
+          </select>
+          <div className="font-mono text-sm text-[#94a3b8]">
+            {new Date().toISOString().split('T')[1].split('.')[0]}Z
+          </div>
+        </div>
+      </header>
+
+      {/* Main Grid: 3 columnas */}
+      <main className="flex-1 grid grid-cols-[260px_1fr_320px] gap-0 min-h-0">
+        {/* Panel Izquierdo: Jerarquía + Baterías + Canales */}
+        <aside className="bg-[#0b1019] border-r border-[#1a2435] flex flex-col overflow-hidden">
+          {/* Jerarquía */}
+          <div className="border-b border-[#1a2435]">
+            <div className="px-3 py-2 text-xs font-bold text-[#64748b] uppercase tracking-wider">
+              📡 Jerarquía Táctica
+            </div>
+            <div className="px-2 pb-2 space-y-1">
+              {Object.values(units).map(unit => (
+                <div key={unit.id}
+                  className={`px-3 py-2 rounded text-xs cursor-pointer transition-colors border-l-2 ${
+                    role === unit.id.slice(0, 2) ? 'border-[#00e5a0] bg-[#00e5a010]' : 'border-transparent hover:bg-[#ffffff05]'
+                  }`}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold">{unit.name}</span>
+                    <span className="flex items-center gap-1 text-[10px]">
+                      <span className={`w-2 h-2 rounded-full ${
+                        unit.status === 'ONLINE' || unit.status === 'READY' ? 'bg-[#00e5a0]' :
+                        unit.status === 'DEGRADED' || unit.status === 'RELOAD' ? 'bg-[#ffb300]' :
+                        unit.status === 'FIRING' ? 'bg-[#ffb300] animate-pulse' : 'bg-[#ff2d55]'
+                      }`} />
+                      {unit.status}
+                    </span>
+                  </div>
+                  <div className="text-[#64748b] text-[10px]">{unit.role} | {unit.callSign}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Canales */}
+          <div className="border-b border-[#1a2435] p-3">
+            <div className="text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">📢 Canales</div>
+            {['cp-net', 'fo-channel', 'fire-net', 'log-net'].map(ch => (
+              <div key={ch}
+                onClick={() => setActiveChannel(ch)}
+                className={`px-3 py-2 rounded text-xs cursor-pointer transition-colors ${
+                  activeChannel === ch ? 'bg-[#00e5a015] text-[#00e5a0]' : 'hover:bg-[#ffffff05]'
+                }`}>
+                {ch.toUpperCase()}
+              </div>
+            ))}
+          </div>
+
+          {/* Baterías */}
+          <div className="p-3">
+            <div className="text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">🔋 Estado Baterías</div>
+            {Object.values(units).filter(u => u.type === 'bat').map(bat => (
+              <div key={bat.id}
+                className={`p-3 rounded-lg mb-2 border text-center ${
+                  bat.status === 'READY' ? 'border-[#00e5a040] bg-[#00e5a005]' :
+                  bat.status === 'FIRING' ? 'border-[#ffb30040] bg-[#ffb30005] animate-pulse' :
+                  'border-[#64748b40] bg-[#ffffff02]'
+                }`}>
+                <div className="text-[10px] text-[#64748b]">{bat.callSign}</div>
+                <div className="text-lg font-bold">{bat.guns} U</div>
+                <div className="text-[10px] text-[#64748b]">Munición: {bat.ammo}%</div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        {/* Panel Central: Grid Táctico + Cola de Misiones */}
+        <section className="flex flex-col bg-[#060a0f] overflow-hidden">
+          {/* Grid Táctico */}
+          <div className="flex-1 relative cursor-crosshair"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = Math.floor((e.clientX - rect.left) / rect.width * 1000);
+              const y = Math.floor((e.clientY - rect.top) / rect.height * 1000);
+              requestFireMission(`NK ${String(x).padStart(3, '0')} ${String(y).padStart(3, '0')}`);
+            }}>
+            <div className="absolute inset-0"
+              style={{
+                backgroundImage: 'linear-gradient(rgba(26,36,53,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(26,36,53,0.5) 1px, transparent 1px)',
+                backgroundSize: '50px 50px'
+              }} />
+            <div className="absolute top-2 left-2 font-mono text-[11px] text-[#64748b] bg-black/70 px-3 py-2 rounded z-10">
+              SECTOR NK | ESCALA 1:5000 | ZONA ALPHA-FOXTROT
+            </div>
+            {/* Targets en el mapa */}
+            {missions.filter(m => m.status !== 'REJECTED').map(m => (
+              <div key={m.id} className="absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 z-10"
+                style={{
+                  left: `${30 + Math.random() * 40}%`,
+                  top: `${30 + Math.random() * 40}%`
+                }}>
+                <div className={`w-3 h-3 rounded-full mx-auto ${
+                  m.status === 'COMPLETE' ? 'bg-[#00e5a0]' :
+                  m.status === 'EXECUTING' ? 'bg-[#ffb300] animate-ping' : 'bg-[#ff2d55]'
+                }`} />
+                <span className="text-[8px] text-[#ff2d55] font-mono whitespace-nowrap">{m.target}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Cola de Misiones */}
+          <div className="bg-[#0b1019] border-t border-[#1a2435] p-3 max-h-[200px] overflow-auto">
+            <div className="text-xs font-bold text-[#64748b] uppercase tracking-wider mb-2">
+              📜 Cola de Misiones ({missions.filter(m => m.status === 'PENDING').length} pendientes)
+            </div>
+            <div className="flex gap-2 overflow-x-auto">
+              {missions.slice(-8).reverse().map(m => (
+                <div key={m.id}
+                  className={`min-w-[200px] p-3 rounded-lg border text-xs flex-shrink-0 ${
+                    m.priority === 'EMERGENCY' ? 'border-l-[#ff2d55] border-l-2 bg-[#ff2d5505]' :
+                    m.priority === 'URGENT' ? 'border-l-[#ffb300] border-l-2 bg-[#ffb30005]' : 'bg-[#ffffff02]'
+                  }`}>
+                  <div className="font-bold font-mono">{m.id}</div>
+                  <div className="text-[#00e5a0] font-mono text-sm">{m.target}</div>
+                  <div className="text-[10px] text-[#64748b]">{m.type} | {m.rounds} RDS | {m.requestedBy}</div>
+                  <div className="flex gap-1 mt-2">
+                    {m.status === 'PENDING' && (role === 'cp' || role === 'bat') && (
+                      <>
+                        <button onClick={() => approveMission(m.id)}
+                          className="px-2 py-1 bg-[#00e5a0] text-black rounded text-[10px] font-bold">APROBAR</button>
+                        <button onClick={() => rejectMission(m.id)}
+                          className="px-2 py-1 bg-[#ff2d55] text-white rounded text-[10px] font-bold">RECHAZAR</button>
+                      </>
+                    )}
+                    {m.status === 'COMPLETE' && <span className="text-[#00e5a0] text-[10px] font-bold">✅ COMPLETADA</span>}
+                    {m.status === 'EXECUTING' && <span className="text-[#ffb300] text-[10px] font-bold animate-pulse">🔥 EN EJECUCIÓN</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* Panel Derecho: Terminal de Comunicaciones */}
+        <aside className="bg-[#0b1019] border-l border-[#1a2435] flex flex-col overflow-hidden">
+          <div className="px-3 py-2 text-xs font-bold text-[#64748b] uppercase tracking-wider border-b border-[#1a2435]">
+            📟 Terminal Segura <span className="text-[#00e5a0] font-mono">[{activeChannel.toUpperCase()}]</span>
+          </div>
+          <div className="flex-1 overflow-auto p-3 font-mono text-xs leading-relaxed">
+            {messages.map((msg, i) => (
+              <div key={i} className="mb-1 flex gap-2">
+                <span className="text-[#64748b] whitespace-nowrap">[{msg.time}]</span>
+                <span className={`font-bold whitespace-nowrap ${
+                  msg.type === 'sys' ? 'text-[#00aaff]' :
+                  msg.type === 'fo' ? 'text-[#00aaff]' :
+                  msg.type === 'bat' ? 'text-[#ffb300]' :
+                  msg.type === 'cp' ? 'text-[#00e5a0]' :
+                  msg.type === 'log' ? 'text-[#8b5cf6]' : 'text-[#ff2d55]'
+                }`}>[{msg.src}]</span>
+                <span className={`${
+                  msg.type === 'crit' ? 'text-[#ff2d55]' : 'text-[#e2e8f0]'
+                } break-all`}>{msg.msg}</span>
+              </div>
+            ))}
+          </div>
+          <div className="p-3 border-t border-[#1a2435] flex gap-2">
+            <input
+              type="text"
+              placeholder="Mensaje cifrado..."
+              className="flex-1 bg-[#060a0f] border border-[#1a2435] rounded px-3 py-2 text-xs font-mono text-[#00e5a0] outline-none focus:border-[#00e5a0]"
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  const input = e.target as HTMLInputElement;
+                  if (input.value.trim()) {
+                    // Enviar mensaje
+                    const src = units[role as keyof typeof units] || Object.values(units).find(u => u.id.startsWith(role));
+                    addMessage(role, src?.callSign || role.toUpperCase(), `📤 ${input.value}`);
+                    // Simular respuesta
+                    setTimeout(() => {
+                      const replies = ['ACK', 'COPY ALL', 'ROGER', 'WILCO'];
+                      addMessage('sys', 'DEST', `📥 ${replies[Math.floor(Math.random() * replies.length)]}`);
+                    }, 800 + Math.random() * 1500);
+                    input.value = '';
+                  }
+                }
+              }}
+            />
+            <button className="px-4 py-2 bg-[#00e5a0] text-black rounded text-xs font-bold">
+              ENV
+            </button>
+          </div>
+        </aside>
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,44 @@
+mcp observador 
+{
+  "type": "FIRE_MISSION_REQUEST",
+  "target_grid": "NK 462 795",
+  "ammo_type": "HE_M107",
+  "charge": "WB_M4A2",
+  "priority": "URGENT"
+}
+# Lógica del Monolito 2.01
+solution = engine.calculate_fire_solution(
+    range_m=4500,
+    projectile="155mm_HE_M107",
+    charge="WB_M4A2", # v0=563 m/s
+    env={'wind': 12, 'pressure': 1015, 'temp': 15}
+)
+# Output: {qe: 145.5, defl: 2.1, tof: 14.2, max_alt: 1200}
+{
+  "ammunition_database": {
+    "105mm": {
+      "HE_M1": {"mass_kg": 14.97, "v0_c7": 494.0, "bc_g7": 0.15},
+      "ILLUM_M314": {"mass_kg": 9.57, "v0_c7": 472.0, "bc_g7": 0.12}
+    },
+    "155mm": {
+      "HE_M107": {
+        "mass_kg": 43.2,
+        "charges": {
+          "GB_M3A1": {"v0_mps": 375, "range_km": 6.0},
+          "WB_M4A2": {"v0_mps": 563, "range_km": 14.6},
+          "WB_M119A2": {"v0_mps": 684, "range_km": 18.1},
+          "RB_M203": {"v0_mps": 827, "range_km": 30.0}
+        }
+      },
+      "HERA_M549A1": {
+        "mass_kg": 43.5,
+        "rocket_assisted": true,
+        "charges": {
+          "WB_M119A2": {"v0_base": 684, "rocket_thrust_n": 2100},
+          "RB_M203": {"v0_base": 827, "rocket_thrust_n": 2100}
+        }
+      }
+    }
+  }
+}
+

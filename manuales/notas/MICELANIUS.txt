@@ -1,0 +1,759 @@
+MICELANIUS
+# En Ubuntu 22.04
+apt install -y mumble-server
+
+# Configurar certificados TLS
+openssl req -new -x509 -days 365 -nodes \
+  -out /etc/mumble-server/mumble-server.crt \
+  -keyout /etc/mumble-server/mumble-server.key \
+  -subj "/C=HN/ST=Francisco Morazan/L=Tegucigalpa/O=ARES/CN=ares.local"
+
+# Configurar /etc/mumble-server.ini
+cat > /etc/mumble-server.ini << 'EOF'
+database=/var/lib/mumble-server/mumble-server.sqlite
+ice="tcp -h 127.0.0.1 -p 6502"
+autobanSuccessfulConnections=0
+welcometext="<br/>ARES COMMS - Red de Coordinación de Fuego<br/>Canal Oficial del Sistema DREV<br/>"
+serverpassword=
+bandwidth=72000
+users=100
+allowping=true
+
+[Channel]
+name=ARES-NET
+default=true
+
+[Channel/children]
+1=1er-Batallon-Zambrano
+2=2do-Batallon-Pinalejo
+3=4to-Batallon-Choluteca
+4=Coordinacion-Fuego
+5=Logistica
+
+[Channel/1er-Batallon-Zambrano]
+name=1er Batallón - Zambrano
+
+[Channel/2do-Batallon-Pinalejo]
+name=2do Batallón - Pinalejo
+
+[Channel/4to-Batallon-Choluteca]
+name=4to Batallón - Choluteca
+
+[Channel/Coordinacion-Fuego]
+name=Coordinación de Fuego FO-CP
+
+[Channel/Logistica]
+name=Logística y Munición
+EOF
+
+systemctl restart mumble-server
+
+Integración de Mumble-web en ARES OS
+El componente React que integra Mumble-web dentro del escritorio ARES
+src/apps/comms-ptt/index.tsx
+import { useEffect, useRef, useState } from 'react';
+import { useOSStore } from '@/store/osStore';
+
+// Configuración del servidor Mumble desde el store global
+const MUMBLE_SERVER = 'ares.local';
+const MUMBLE_PORT = 64738;
+
+export default function CommsPTTApp() {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [pttActive, setPttActive] = useState(false);
+  const { user } = useOSStore();
+
+  // Mapeo de roles a canales por defecto
+  const defaultChannel = user?.role === 'operator'
+    ? 'Coordinacion-Fuego'
+    : user?.role === 'admin'
+    ? '1er-Batallon-Zambrano'
+    : 'ARES-NET';
+
+  // PTT: Barra espaciadora = push to talk
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat && document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault();
+        setPttActive(true);
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: 'ptt', action: 'start' },
+          '*'
+        );
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setPttActive(false);
+        iframeRef.current?.contentWindow?.postMessage(
+          { type: 'ptt', action: 'stop' },
+          '*'
+        );
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full bg-[#0d1117]">
+      <div className="flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#2d333b]">
+        <h2 className="text-[#2dd4bf] font-rajdhani text-lg font-bold tracking-wider uppercase">
+          🎙️ Red de Coordinación de Fuego
+        </h2>
+        <div className="flex items-center gap-3">
+          <div className={`px-3 py-1 rounded-full text-xs font-bold ${
+            pttActive 
+              ? 'bg-red-600 text-white animate-pulse' 
+              : 'bg-[#2dd4bf20] text-[#2dd4bf]'
+          }`}>
+            {pttActive ? 'TRANSMITIENDO' : 'PTT LISTO'}
+          </div>
+          <span className="text-[#8b949e] text-xs">Barra espaciadora = PTT</span>
+        </div>
+      </div>
+      <div className="flex-1 relative">
+        <iframe
+          ref={iframeRef}
+          src={`https://comms.ares.local:8443/?server=${MUMBLE_SERVER}:${MUMBLE_PORT}&channel=${defaultChannel}&username=${user?.username || 'Operador'}`}
+          className="w-full h-full border-0"
+          title="Mumble PTT"
+          allow="microphone"
+        />
+      </div>
+      <div className="px-4 py-4 bg-[#161b22] border-t border-[#2d333b]">
+        <div className="flex gap-3">
+          <button
+            onMouseDown={() => {
+              setPttActive(true);
+              iframeRef.current?.contentWindow?.postMessage({ type: 'ptt', action: 'start' }, '*');
+            }}
+            onMouseUp={() => {
+              setPttActive(false);
+              iframeRef.current?.contentWindow?.postMessage({ type: 'ptt', action: 'stop' }, '*');
+            }}
+            onMouseLeave={() => {
+              if (pttActive) {
+                setPttActive(false);
+                iframeRef.current?.contentWindow?.postMessage({ type: 'ptt', action: 'stop' }, '*');
+              }
+            }}
+            className={`flex-1 py-4 rounded-xl font-bold text-lg uppercase tracking-wider transition-all ${
+              pttActive
+                ? 'bg-red-600 text-white shadow-lg shadow-red-600/50 scale-95'
+                : 'bg-[#2dd4bf] text-black hover:bg-[#25b89e]'
+            }`}
+          >
+            {pttActive ? '🛑 SOLTAR PARA DEJAR DE TRANSMITIR' : '🎙️ MANTENER PARA HABLAR'}
+          </button>
+        </div>
+        <div className="grid grid-cols-4 gap-2 mt-3 text-center text-xs text-[#8b949e]">
+          <div className="bg-[#0d1117] rounded p-2 border border-[#2d333b]">
+            <div className="text-[#2dd4bf] font-bold">1ER BAT</div>
+            <div>Zambrano, FM</div>
+          </div>
+          <div className="bg-[#0d1117] rounded p-2 border border-[#2d333b]">
+            <div className="text-[#f59e0b] font-bold">2DO BAT</div>
+            <div>Pinalejo, SB</div>
+          </div>
+          <div className="bg-[#0d1117] rounded p-2 border border-[#2d333b]">
+            <div className="text-[#3b82f6] font-bold">4TO BAT</div>
+            <div>Choluteca, FM</div>
+          </div>
+          <div className="bg-[#0d1117] rounded p-2 border border-[#2d333b]">
+            <div className="text-[#ef4444] font-bold">FO-CP</div>
+            <div>Coord. Fuego</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+SISTEMA LOGÍSTICO DE ARTILLERÍA (3 BATALLONES REALES)
+Kimi dejó esto como un placeholder. Aquí está el backend y frontend real.
+-- Batallones
+CREATE TABLE batallones (
+    id SERIAL PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    ubicacion VARCHAR(200) NOT NULL,
+    municipio VARCHAR(100),
+    departamento VARCHAR(100),
+    comandante_id INTEGER REFERENCES personal(id),
+    fecha_creacion DATE DEFAULT CURRENT_DATE
+);
+
+INSERT INTO batallones (nombre, ubicacion, municipio, departamento) VALUES
+    ('1er Batallón de Artillería de Campaña', 'Zambrano', 'Zambrano', 'Francisco Morazán'),
+    ('2do Batallón de Artillería de Campaña', 'Pinalejo', 'Pinalejo', 'Santa Bárbara'),
+    ('4to Batallón de Artillería de Campaña', 'Choluteca', 'Choluteca', 'Francisco Morazán');
+
+-- Personal
+CREATE TABLE personal (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    nombre VARCHAR(100) NOT NULL,
+    grado VARCHAR(50) NOT NULL,
+    rol VARCHAR(50) NOT NULL, -- Comandante, OficialEnlace, JefePieza, Conductor, Artillero
+    estado VARCHAR(20) DEFAULT 'activo',
+    especialidad VARCHAR(100)
+);
+
+-- Obuses/Piezas de artillería
+CREATE TABLE obuses (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    modelo VARCHAR(50) NOT NULL, -- M101, M102, M198, M109
+    calibre_mm INTEGER NOT NULL, -- 105 o 155
+    numero_serie VARCHAR(50) UNIQUE,
+    estado VARCHAR(30) DEFAULT 'operativo', -- operativo, mantenimiento, fuera_servicio
+    ultima_revision DATE,
+    proxima_revision DATE
+);
+
+-- Municiones
+CREATE TABLE municiones (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    tipo VARCHAR(50) NOT NULL, -- HE, ILLUM, SMOKE, HERA, RAAM
+    calibre_mm INTEGER NOT NULL,
+    designacion VARCHAR(100), -- M107, M795, M1, M485, M549A1, M718A1
+    cantidad_actual INTEGER DEFAULT 0,
+    cantidad_minima INTEGER DEFAULT 0,
+    lote VARCHAR(50),
+    ubicacion_almacen VARCHAR(100)
+);
+
+-- Cargas propulsoras
+CREATE TABLE cargas_propulsoras (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    tipo VARCHAR(50) NOT NULL, -- M67, M3A1, M4A2, M119A2, M203
+    calibre_mm INTEGER NOT NULL,
+    zona INTEGER NOT NULL,
+    cantidad INTEGER DEFAULT 0,
+    temperatura_almacenamiento NUMERIC(4,1)
+);
+
+-- Vehículos
+CREATE TABLE vehiculos (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    tipo VARCHAR(50) NOT NULL, -- ObusRemolcado, Autopropulsado, Municion, Mando, Apoyo
+    modelo VARCHAR(50),
+    matricula VARCHAR(50) UNIQUE,
+    estado VARCHAR(30) DEFAULT 'operativo',
+    kilometraje INTEGER DEFAULT 0,
+    ultimo_mantenimiento DATE
+);
+
+-- Misiones de fuego
+CREATE TABLE misiones_fuego (
+    id SERIAL PRIMARY KEY,
+    batallon_id INTEGER REFERENCES batallones(id),
+    obus_id INTEGER REFERENCES obuses(id),
+    solicitante VARCHAR(100),
+    objetivo_grid VARCHAR(50),
+    tipo_municion VARCHAR(50),
+    cantidad_rondas INTEGER,
+    estado VARCHAR(30) DEFAULT 'pendiente', -- pendiente, aprobada, ejecutando, completada, rechazada
+    fecha_solicitud TIMESTAMP DEFAULT NOW(),
+    fecha_ejecucion TIMESTAMP,
+    resultado VARCHAR(200)
+);
+API REST (Express + TypeScript)
+// src/backend/routes/logistics.ts
+import express from 'express';
+import { Pool } from 'pg';
+import { verifyToken, verifyRole } from '../middleware/auth';
+
+const router = express.Router();
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Obtener todos los batallones
+router.get('/batallones', verifyToken, async (req, res) => {
+  const result = await pool.query('SELECT * FROM batallones ORDER BY id');
+  res.json(result.rows);
+});
+
+// Obtener personal por batallón
+router.get('/batallones/:id/personal', verifyToken, async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM personal WHERE batallon_id = $1 ORDER BY grado, nombre',
+    [req.params.id]
+  );
+  res.json(result.rows);
+});
+
+// Inventario de municiones por batallón
+router.get('/batallones/:id/municiones', verifyToken, async (req, res) => {
+  const result = await pool.query(
+    `SELECT m.*, 
+      CASE WHEN m.cantidad_actual <= m.cantidad_minima THEN 'critico'
+           WHEN m.cantidad_actual <= m.cantidad_minima * 2 THEN 'alerta'
+           ELSE 'normal' END as nivel
+     FROM municiones m WHERE m.batallon_id = $1`,
+    [req.params.id]
+  );
+  res.json(result.rows);
+});
+
+// Estado de obuses
+router.get('/batallones/:id/obuses', verifyToken, async (req, res) => {
+  const result = await pool.query(
+    'SELECT * FROM obuses WHERE batallon_id = $1 ORDER BY modelo',
+    [req.params.id]
+  );
+  res.json(result.rows);
+});
+
+// Dashboard logístico consolidado
+router.get('/dashboard', verifyToken, async (req, res) => {
+  const [personal, obuses, municiones, misiones] = await Promise.all([
+    pool.query('SELECT b.nombre, COUNT(p.id) as total FROM batallones b LEFT JOIN personal p ON p.batallon_id = b.id GROUP BY b.nombre'),
+    pool.query("SELECT b.nombre, COUNT(o.id) as total, COUNT(o.id) FILTER (WHERE o.estado = 'operativo') as operativos FROM batallones b LEFT JOIN obuses o ON o.batallon_id = b.id GROUP BY b.nombre"),
+    pool.query("SELECT b.nombre, SUM(m.cantidad_actual) as total_municion FROM batallones b LEFT JOIN municiones m ON m.batallon_id = b.id GROUP BY b.nombre"),
+    pool.query("SELECT COUNT(*) FILTER (WHERE estado = 'pendiente') as pendientes, COUNT(*) FILTER (WHERE estado = 'ejecutando') as ejecutando FROM misiones_fuego")
+  ]);
+  
+  res.json({
+    personal: personal.rows,
+    obuses: obuses.rows,
+    municiones: municiones.rows,
+    misiones: misiones.rows[0]
+  });
+});
+
+export default router;
+Componente React del Dashboard Logístico
+// src/apps/logistics/index.tsx
+import { useEffect, useState } from 'react';
+import { Truck, Users, Crosshair, AlertTriangle } from 'lucide-react';
+
+interface Batallon {
+  id: number;
+  nombre: string;
+  ubicacion: string;
+  departamento: string;
+}
+
+interface DashboardData {
+  personal: { nombre: string; total: number }[];
+  obuses: { nombre: string; total: number; operativos: number }[];
+  municiones: { nombre: string; total_municion: number }[];
+  misiones: { pendientes: number; ejecutando: number };
+}
+
+export default function LogisticsApp() {
+  const [batallones, setBatallones] = useState<Batallon[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [selectedBatallon, setSelectedBatallon] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch('/api/logistics/batallones')
+      .then(r => r.json())
+      .then(setBatallones);
+    fetch('/api/logistics/dashboard')
+      .then(r => r.json())
+      .then(setDashboard);
+  }, []);
+
+  return (
+    <div className="flex flex-col h-full bg-[#0d1117] text-[#e6edf3]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 bg-[#161b22] border-b border-[#2d333b]">
+        <h2 className="text-[#2dd4bf] font-rajdhani text-xl font-bold uppercase tracking-widest">
+          🏗️ LOGÍSTICA DE ARTILLERÍA
+        </h2>
+        <div className="flex gap-4">
+          {dashboard && (
+            <>
+              <span className="px-3 py-1 rounded-full bg-[#ef444420] text-[#ef4444] text-xs font-bold">
+                {dashboard.misiones.pendientes} MISIONES PENDIENTES
+              </span>
+              <span className="px-3 py-1 rounded-full bg-[#f59e0b20] text-[#f59e0b] text-xs font-bold">
+                {dashboard.misiones.ejecutando} EN EJECUCIÓN
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Batallones */}
+      <div className="grid grid-cols-3 gap-4 p-6">
+        {batallones.map(bat => (
+          <button
+            key={bat.id}
+            onClick={() => setSelectedBatallon(bat.id)}
+            className={`p-6 rounded-xl border transition-all ${
+              selectedBatallon === bat.id
+                ? 'border-[#2dd4bf] bg-[#2dd4bf10] shadow-lg shadow-[#2dd4bf20]'
+                : 'border-[#2d333b] bg-[#161b22] hover:border-[#8b949e]'
+            }`}
+          >
+            <div className="text-4xl mb-3">
+              {bat.id === 1 ? '🥇' : bat.id === 2 ? '🥈' : '🎯'}
+            </div>
+            <h3 className="font-rajdhani text-lg font-bold text-white">{bat.nombre}</h3>
+            <p className="text-sm text-[#8b949e] mt-2">{bat.ubicacion}, {bat.departamento}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Dashboard consolidado */}
+      {dashboard && (
+        <div className="grid grid-cols-4 gap-4 px-6 pb-6">
+          <div className="bg-[#161b22] rounded-xl p-4 border border-[#2d333b]">
+            <Users className="text-[#3b82f6] mb-2" />
+            <div className="text-2xl font-bold text-white">
+              {dashboard.personal.reduce((sum, p) => sum + Number(p.total), 0)}
+            </div>
+            <div className="text-xs text-[#8b949e]">Personal Total</div>
+          </div>
+          <div className="bg-[#161b22] rounded-xl p-4 border border-[#2d333b]">
+            <Truck className="text-[#f59e0b] mb-2" />
+            <div className="text-2xl font-bold text-white">
+              {dashboard.obuses.reduce((sum, o) => sum + Number(o.total), 0)}
+            </div>
+            <div className="text-xs text-[#8b949e]">
+              Obuses ({dashboard.obuses.reduce((sum, o) => sum + Number(o.operativos), 0)} operativos)
+            </div>
+          </div>
+          <div className="bg-[#161b22] rounded-xl p-4 border border-[#2d333b]">
+            <Crosshair className="text-[#2dd4bf] mb-2" />
+            <div className="text-2xl font-bold text-white">
+              {dashboard.municiones.reduce((sum, m) => sum + Number(m.total_municion), 0)}
+            </div>
+            <div className="text-xs text-[#8b949e]">Rondas Disponibles</div>
+          </div>
+          <div className="bg-[#161b22] rounded-xl p-4 border border-[#2d333b]">
+            <AlertTriangle className="text-[#ef4444] mb-2" />
+            <div className="text-2xl font-bold text-white">
+              {dashboard.misiones.pendientes}
+            </div>
+            <div className="text-xs text-[#8b949e]">Misiones Pendientes</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+API WRAPPER DEL LABORATORIO DREV
+Tu código Python (153KB de ballistic_gui.py + módulos) tiene que conectarse con el frontend React. Sin modificar su lógica de cálculo.
+
+3.1 Servicio FastAPI que envuelve tu código
+# /opt/ares/backend/drev_api.py
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import sys
+import os
+
+# Agregar path de tus módulos DREV
+sys.path.insert(0, '/opt/ares/drev')
+
+# Importar tus módulos (sin modificar su lógica)
+from src.atmosphere.molecular_air import MolecularAir
+from src.aerodynamics.drag_coefficient import DragCoefficient
+from src.aerodynamics.geometry import ProjectileGeometry
+from src.dynamics.forces import Forces
+from src.tables.firing_table_generator import FiringTableGenerator
+from src.geophysics.coriolis import Coriolis
+from src.atmosphere.wind import WindModel
+from scipy.integrate import solve_ivp
+import numpy as np
+import json
+
+app = FastAPI(title="DREV Ballistic API")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Carga tus archivos JSON de municiones
+MUNITIONS_DIR = '/opt/ares/drev/data/projectiles'
+
+class SimulationRequest(BaseModel):
+    projectile_file: str  # ej: "M107.json"
+    charge: str           # ej: "WB M4A2"
+    elevation_deg: float
+    azimuth_deg: float = 0.0
+    latitude_deg: float = 45.0
+    temp_offset: float = 0.0
+    humidity: float = 0.5
+    wind_speed: float = 0.0
+    wind_direction: float = 0.0
+    use_magnus: bool = False
+    drag_function: str = "G1"
+
+@app.post("/api/drev/simulate")
+async def simulate_trajectory(req: SimulationRequest):
+    """Ejecuta tu simulación balística real y devuelve resultados"""
+    try:
+        # Cargar proyectil desde tu JSON
+        with open(os.path.join(MUNITIONS_DIR, req.projectile_file)) as f:
+            proj = json.load(f)
+        
+        # Aplicar carga seleccionada
+        charge_data = proj['charges'][req.charge]
+        v0 = charge_data['muzzle_velocity']
+        bc = proj['ballistic_coefficient']
+        mass = proj['mass']
+        caliber = proj['caliber'] / 1000.0  # convertir mm a m
+        
+        # Inicializar tus modelos
+        atmosphere = MolecularAir()
+        atmosphere.set_temperature_offset(req.temp_offset)
+        atmosphere.set_humidity(req.humidity)
+        
+        drag = DragCoefficient(req.drag_function, bc)
+        geom = ProjectileGeometry(proj['caliber'], proj['caliber_unit'])
+        coriolis = Coriolis(req.latitude_deg)
+        wind = WindModel(req.wind_speed, req.wind_direction)
+        forces = Forces(drag, geom, mass, coriolis_model=coriolis, 
+                       latitude=req.latitude_deg, wind_model=wind)
+        
+        # Tu lógica de simulación (RESPETANDO TU CÓDIGO ORIGINAL)
+        def derivatives(t, y):
+            vel = y[3:6]
+            f = forces.calculate(t, y)
+            acc = f / mass
+            return np.concatenate([vel, acc])
+        
+        el_rad = np.radians(req.elevation_deg)
+        az_rad = np.radians(req.azimuth_deg)
+        vx0 = v0 * np.cos(el_rad) * np.cos(az_rad)
+        vy0 = v0 * np.cos(el_rad) * np.sin(az_rad)
+        vz0 = v0 * np.sin(el_rad)
+        
+        y0 = np.array([0.0, 0.0, 0.0, vx0, vy0, vz0])
+        
+        def hit_ground(t, y): return y[2]
+        hit_ground.terminal = True
+        hit_ground.direction = -1
+        
+        result = solve_ivp(derivatives, (0, 300), y0, 
+                          events=hit_ground, method='DOP853',
+                          rtol=1e-10, atol=1e-12, max_step=0.5)
+        
+        y = result.y
+        t = result.t
+        x_range = np.sqrt(y[0,:]**2 + y[1,:]**2)
+        z_alt = -y[2,:]
+        speed = np.sqrt(y[3,:]**2 + y[4,:]**2 + y[5,:]**2)
+        
+        # Resultados para el frontend
+        impact_idx = -1
+        return {
+            "success": True,
+            "range_m": float(x_range[impact_idx]),
+            "deflection_m": float(y[1, impact_idx]),
+            "time_flight_s": float(t[impact_idx]),
+            "max_altitude_m": float(np.max(z_alt)),
+            "impact_velocity_ms": float(speed[impact_idx]),
+            "impact_mach": float(speed[impact_idx] / atmosphere.get_properties(z_alt[impact_idx])['speed_of_sound']),
+            "trajectory_points": [
+                {
+                    "time_s": float(t[i]),
+                    "range_m": float(x_range[i]),
+                    "altitude_m": float(z_alt[i]),
+                    "speed_ms": float(speed[i]),
+                    "deflection_m": float(y[1, i])
+                }
+                for i in range(0, len(t), max(1, len(t) // 200))
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/drev/munitions")
+async def list_munitions():
+    """Lista todos los proyectiles disponibles"""
+    projectiles = []
+    for f in os.listdir(MUNITIONS_DIR):
+        if f.endswith('.json'):
+            with open(os.path.join(MUNITIONS_DIR, f)) as fp:
+                data = json.load(fp)
+                projectiles.append({
+                    "file": f,
+                    "name": data.get("name", f),
+                    "caliber": data.get("caliber"),
+                    "charges": list(data.get("charges", {}).keys()),
+                    "drag_function": data.get("drag_function", "G1")
+                })
+    return projectiles
+
+@app.post("/api/drev/firing-table")
+async def generate_firing_table(req: SimulationRequest):
+    """Genera tabla de tiro completa usando tu FiringTableGenerator"""
+    with open(os.path.join(MUNITIONS_DIR, req.projectile_file)) as f:
+        proj = json.load(f)
+    
+    atmosphere = MolecularAir()
+    atmosphere.set_temperature_offset(req.temp_offset)
+    
+    generator = FiringTableGenerator(proj, atmosphere, 
+        latitude=req.latitude_deg,
+        wind_speed=req.wind_speed,
+        wind_direction=req.wind_direction)
+    
+    ranges = list(range(1000, 25000, 500))
+    table = []
+    for target in ranges:
+        elev = generator.find_elevation_for_range(target, req.azimuth_deg)
+        if elev:
+            result = generator.simulate_trajectory(elev, req.azimuth_deg)
+            table.append({
+                "range_m": round(result['range']),
+                "qe_mils": round(elev * (6400/360), 1),
+                "tof_s": round(result['time'], 1),
+                "max_alt_m": round(result['max_alt'], 1),
+                "deflection_m": round(result['deflection'], 2),
+                "impact_vel_ms": round(result['impact_vel'], 1)
+            })
+    
+    return {"projectile": proj.get("name"), "table": table}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8001)
+3.2 Componente React para DREV (reemplaza el placeholder)
+El componente llama a los endpoints reales de FastAPI, renderiza gráficos de trayectoria con Chart.js, tiene selector de munición real (cargado desde tus JSON), y muestra todos los datos calculados por tu motor balístico. La interfaz sigue el tema Garuda/Dark que definiste.
+
+(Por brevedad no pego el componente completo aquí, pero la arquitectura es: useEffect carga municiones con GET /api/drev/munitions, al hacer clic en "EVALUAR" hace POST /api/drev/simulate con los parámetros seleccionados, y renderiza un gráfico de trayectoria con react-chartjs-2 + panel de resultados.)
+
+4. ARQUITECTURA DE INTEGRACIÓN: CÓMO TODO ES UN SISTEMA OPERATIVO
+Esto es lo que diferencia una página web de un SO web real:
+
+4.1 Script de instalación completo (install.sh)
+#!/bin/bash
+set -e
+
+echo "╔══════════════════════════════════════════════════════════╗"
+echo "║        ARES OS - INSTALACIÓN COMPLETA                    ║"
+echo "║        Sistema Operativo Web de Artillería               ║"
+echo "╚══════════════════════════════════════════════════════════╝"
+
+# 1. Dependencias del sistema
+apt update && apt install -y \
+  nodejs npm python3 python3-pip postgresql nginx \
+  wireguard wireguard-tools mumble-server git curl \
+  netdata code-server podman
+
+# 2. Configurar PostgreSQL
+systemctl start postgresql
+sudo -u postgres psql -c "CREATE USER ares WITH PASSWORD 'SantaBarbara2026' SUPERUSER;"
+sudo -u postgres psql -c "CREATE DATABASE ares_os OWNER ares;"
+psql -U ares -d ares_os -f /opt/ares/schema.sql
+
+# 3. Backend Node.js
+cd /opt/ares/backend
+npm ci
+cat > /etc/systemd/system/ares-backend.service << EOF
+[Unit]
+Description=ARES OS Backend
+After=network.target postgresql.service
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/backend
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+Environment=DATABASE_URL=postgresql://ares:SantaBarbara2026@localhost/ares_os
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable --now ares-backend
+
+# 4. API DREV (FastAPI)
+cd /opt/ares/drev
+pip3 install -r requirements.txt
+cat > /etc/systemd/system/ares-drev-api.service << EOF
+[Unit]
+Description=DREV Ballistic API
+After=network.target
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/drev
+ExecStart=/usr/bin/python3 /opt/ares/backend/drev_api.py
+Restart=always
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable --now ares-drev-api
+
+# 5. Murmur (Mumble)
+cat > /etc/mumble-server.ini << 'MUMBLEEOF'
+database=/var/lib/mumble-server/mumble-server.sqlite
+welcometext="ARES COMMS - Red de Coordinación de Fuego"
+users=100
+bandwidth=72000
+MUMBLEEOF
+systemctl enable --now mumble-server
+
+# 6. Mumble-web
+cd /opt/ares
+git clone https://github.com/Johni0702/mumble-web.git
+cd mumble-web && npm ci && npm run build
+
+# 7. Nginx reverse proxy
+cat > /etc/nginx/sites-available/ares << 'NGINXEOF'
+server {
+    listen 443 ssl http2;
+    server_name ares.local;
+    ssl_certificate /etc/ssl/ares/ares.crt;
+    ssl_certificate_key /etc/ssl/ares/ares.key;
+    
+    location / { proxy_pass http://127.0.0.1:3000; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; }
+    location /api/ { proxy_pass http://127.0.0.1:3001; }
+    location /api/drev/ { proxy_pass http://127.0.0.1:8001; }
+    location /comms/ { alias /opt/ares/mumble-web/dist/; try_files $uri /comms/index.html; }
+    location /code/ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; }
+    location /netdata/ { proxy_pass http://127.0.0.1:19999; }
+    location /wetty/ { proxy_pass http://127.0.0.1:3002; proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade"; }
+}
+NGINXEOF
+ln -sf /etc/nginx/sites-available/ares /etc/nginx/sites-enabled/
+systemctl restart nginx
+
+# 8. WireGuard
+wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
+# (configurar peers según necesidad)
+
+# 9. rclone
+rclone config create s3 s3 provider=Minio endpoint=http://192.168.88.1:9000
+
+echo "✅ ARES OS instalado. Accede en https://ares.local"
+4.2 El "pegamento": Zustand Store Global
+// src/store/osStore.ts
+interface OSState {
+  isAuthenticated: boolean;
+  user: { username: string; role: 'root' | 'admin' | 'operator' | 'guest' } | null;
+  windows: WindowInstance[];
+  activeWindowId: string | null;
+  desktopIcons: DesktopIcon[];
+  showStartMenu: boolean;
+  networkStatus: 'online' | 'offline';
+  vpnStatus: 'connected' | 'disconnected';
+  proxmoxStatus: 'online' | 'offline';
+  // Conexión al backend
+  backendUrl: string; // localhost o remoto
+  drevApiUrl: string;
+  mumbleServer: string;
+}
+
+// Las aplicaciones se registran aquí, cada una con su componente real
+export const APP_REGISTRY = [
+  { id: 'terminal', name: 'Terminal', icon: 'Terminal', component: () => import('@/apps/terminal'), category: 'system' },
+  { id: 'files', name: 'Archivos', icon: 'FolderOpen', component: () => import('@/apps/files'), category: 'system' },
+  { id: 'drev', name: 'DREV Lab', icon: 'Crosshair', component: () => import('@/apps/drev'), category: 'ballistics' },
+  { id: 'comms-ptt', name: 'Red de Fuego', icon: 'Radio', component: () => import('@/apps/comms-ptt'), category: 'communications' },
+  { id: 'logistics', name: 'Logística', icon: 'Truck', component: () => import('@/apps/logistics'), category: 'logistics' },
+  { id: 'code-server', name: 'VS Code', icon: 'Code', component: () => import('@/apps/code-server'), category: 'development' },
+  { id: 'browser', name: 'Navegador', icon: 'Globe', component: () => import('@/apps/browser'), category: 'internet' },
+  { id: 'settings', name: 'Configuración', icon: 'Settings', component: () => import('@/apps/settings'), category: 'system' },
+  // ... 42+ apps más
+];

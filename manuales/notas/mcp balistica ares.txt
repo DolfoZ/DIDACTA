@@ -1,0 +1,221 @@
+import os
+import json
+from mcp.server import FastMCP
+from mcp.types import Resource, Tool
+from typing import List, Dict, Any
+
+# Initialize the MCP Server
+mcp = FastMCP("ares-tactical-system")
+
+# =============================================================================
+# DATA EXTRACTION & DATABASE (Derived from your provided files)
+# =============================================================================
+
+PROJECTILES_DB = {
+    "155mm_HE_M107": {
+        "name": "155mm HE M107",
+        "mass_kg": 43.2,
+        "radius_m": 0.0775,
+        "drag_model": "G7",
+        "bc_g7": 0.185,
+        "v0_ref": 827,
+        "source": "FT 155-AM-2"
+    },
+    "155mm_HERA_M549A1": {
+        "name": "155mm HERA M549A1",
+        "mass_kg": 43.5,
+        "radius_m": 0.0775,
+        "drag_model": "G7",
+        "bc_g7": 0.210,
+        "v0_ref": 600,
+        "rocket_propulsion": True,
+        "source": "TM 43-0001-28"
+    },
+    "155mm_ILLUM_M485": {
+        "name": "155mm ILLUM M485",
+        "mass_kg": 45.4,
+        "burn_time_s": 60,
+        "luminous_intensity_cd": 1000000,
+        "source": "TM 43-0001-28"
+    },
+    "155mm_RAAM_M718": {
+        "name": "155mm HE RAAM LM718A1",
+        "mass_kg": 46.7,
+        "submunitions": 36,
+        "source": "FM 20-32"
+    },
+    "105mm_HE_M1": {
+        "name": "105mm HE M1",
+        "mass_kg": 14.97,
+        "radius_m": 0.053,
+        "drag_model": "G7",
+        "bc_g7": 0.150,
+        "v0_ref": 480,
+        "source": "FT 105-H-6"
+    }
+}
+
+CHARGES_DB = {
+    "155_GB_M3A1": {
+        "designation": "GB M3A1",
+        "zone": 1,
+        "v0_mps": 375,
+        "max_range_m": 6000,
+        "compatible_projectiles": ["155mm_HE_M107", "155mm_ILLUM_M485"],
+        "type": "Green Bag"
+    },
+    "155_WB_M4A2": {
+        "designation": "WB M4A2",
+        "zone": 4,
+        "v0_mps": 565,
+        "max_range_m": 18000,
+        "compatible_projectiles": ["155mm_HE_M107", "155mm_HERA_M549A1"],
+        "type": "White Bag"
+    },
+    "155_RB_M119A2": {
+        "designation": "RB M119A2",
+        "zone": 7,
+        "v0_mps": 685,
+        "max_range_m": 24000,
+        "compatible_projectiles": ["155mm_HE_M107"],
+        "type": "Red Bag"
+    },
+    "155_RB_M203": {
+        "designation": "RB M203/M203A1",
+        "zone": 8,
+        "v0_mps": 808,
+        "max_range_m": 30000,
+        "compatible_projectiles": ["155mm_HERA_M549A1"],
+        "type": "Combustible Case"
+    }
+}
+
+COMMS_HIERARCHY = {
+    "CP": {"role": "Puesto de Mando", "clearance": "SECRET", "access": "ALL"},
+    "FO": {"role": "Observador Avanzado", "clearance": "CONFIDENTIAL", "access": "FIRE_REQUEST"},
+    "BATTERY": {"role": "Jefe de Batería", "clearance": "SECRET", "access": "FIRE_EXECUTION"},
+    "LOG": {"role": "Logística", "clearance": "RESTRICTED", "access": "INVENTORY"}
+}
+
+DREV_MANUAL_SUMMARY = """
+SISTEMA DE NAVEGACIÓN INERCIAL DREV - RESUMEN TÁCTICO
+1. Introducción: INS de fibra óptica, precisión < 0.3 mils azimut.
+2. Arquitectura: VRU (Unidad Referencia Vehículo), CDU (Unidad Control Despliegue), PPU (Paquete Potencia).
+3. Modos de Alineamiento:
+   - Fino (Fine): 10 min, máx precisión.
+   - Normal: 4 min, ±20m error.
+   - Rápido (Rapid): 30s, ±0.7 mils.
+4. Operación: Verificar oscilación INS y coordenadas antes de uso. No disparar si el INS no está oscilando correctamente.
+5. Límites de Seguridad: Tácticos (rojo/verde) vs Mecánicos.
+6. Munición: Verificar tablas de tiro y cargas propulsoras (GB/WB/RB).
+"""
+
+# =============================================================================
+# TOOLS (AI Capabilities)
+# =============================================================================
+
+@mcp.tool()
+def get_projectile_info(projectile_id: str) -> Dict[str, Any]:
+    """Retrieve detailed technical specifications for a specific artillery projectile."""
+    pid = projectile_id.upper().replace(" ", "_")
+    return PROJECTILES_DB.get(pid, {"error": "Projectile not found in database"})
+
+@mcp.tool()
+def get_charge_info(charge_id: str) -> Dict[str, Any]:
+    """Retrieve specifications for a propelling charge (e.g., GB M3A1, WB M4A2)."""
+    cid = charge_id.upper().replace(" ", "_")
+    return CHARGES_DB.get(cid, {"error": "Charge not found in database"})
+
+@mcp.tool()
+def calculate_compatibility(projectile_id: str, charge_id: str) -> Dict[str, Any]:
+    """Check if a projectile is compatible with a specific charge according to STANAG/Firing Tables."""
+    pid = projectile_id.upper().replace(" ", "_")
+    cid = charge_id.upper().replace(" ", "_")
+    
+    proj = PROJECTILES_DB.get(pid)
+    charge = CHARGES_DB.get(cid)
+    
+    if not proj or not charge:
+        return {"error": "Invalid projectile or charge ID"}
+    
+    is_compatible = pid in charge.get("compatible_projectiles", [])
+    return {
+        "compatible": is_compatible,
+        "projectile": proj["name"],
+        "charge": charge["designation"],
+        "estimated_v0": charge["v0_mps"] if is_compatible else 0,
+        "warning": "Check official firing tables (FT 155-AM-2) for operational use."
+    }
+
+@mcp.tool()
+def get_drev_manual_content(query: str) -> str:
+    """Search the DREV tactical manual for operational procedures and system specs."""
+    # Simple keyword matching for the MCP context
+    if "alineamiento" in query.lower() or "fine" in query.lower():
+        return "Modos de Alineamiento: Fino (10min, máx precisión), Normal (4min, ±20m), Rápido (30s, ±0.7 mils)."
+    elif "seguridad" in query.lower() or "limit" in query.lower():
+        return "Límites de Seguridad: Tácticos (4x error probable), Mecánicos del arma. Rojo = Fuera de rango, Verde = Seguro."
+    elif "ins" in query.lower():
+        return "INS de fibra óptica, precisión 0.3 mil azimut, >200 Hz. Verificar oscilación antes de disparar."
+    else:
+        return DREV_MANUAL_SUMMARY
+
+@mcp.tool()
+def get_comms_hierarchy(role: str) -> Dict[str, Any]:
+    """Get the role, clearance level, and access rights for a user in the communications network."""
+    role_key = role.upper()
+    if role_key in COMMS_HIERARCHY:
+        return COMMS_HIERARCHY[role_key]
+    return {"error": "Role not recognized"}
+
+@mcp.tool()
+def get_ares_system_config() -> Dict[str, Any]:
+    """Retrieve the network and system configuration for the ARES OS environment."""
+    return {
+        "os_name": "ARES (Linux Clone)",
+        "root_user": "Santa Barbara",
+        "gateway": "192.168.88.1",
+        "dns": "1.1.1.1",
+        "proxmox_cluster": "192.168.88.0/24",
+        "default_browser": "Firefox (Open Source)",
+        "active_modules": ["DREV", "Logistics", "Communications", "Terminal", "Proxmox"]
+    }
+
+# =============================================================================
+# RESOURCES (Static Data for AI Context)
+# =============================================================================
+
+@mcp.resource("drev://manual/summary")
+async def get_drev_manual_resource() -> str:
+    """Provides the full summary of the DREV navigation and targeting system manual."""
+    return DREV_MANUAL_SUMMARY
+
+@mcp.resource("ares://specs/projectiles/all")
+async def get_all_projectiles_resource() -> str:
+    """Returns the JSON data for all available projectiles in the ARES database."""
+    return json.dumps(PROJECTILES_DB, indent=2)
+
+@mcp.resource("ares://specs/charges/all")
+async def get_all_charges_resource() -> str:
+    """Returns the JSON data for all available propelling charges in the ARES database."""
+    return json.dumps(CHARGES_DB, indent=2)
+
+# =============================================================================
+# PROMPTS (Guided Workflows)
+# =============================================================================
+
+@mcp.prompt()
+def plan_fire_mission() -> str:
+    """Guide the AI to plan a fire mission using DREV and Logistics data."""
+    return """
+    Please guide the operator through a fire mission planning workflow using the ARES system tools:
+    1.  **Target Analysis**: Identify target coordinates and terrain.
+    2.  **Munition Selection**: Use `get_projectile_info` to select the right shell (e.g., HE, ILLUM, HERA).
+    3.  **Charge Selection**: Use `calculate_compatibility` to find a charge that reaches the target range.
+    4.  **Safety Check**: Verify against `get_drev_manual_content` for safety limits.
+    5.  **Execution**: Confirm via the Comms hierarchy using `get_comms_hierarchy`.
+    """
+
+if __name__ == "__main__":
+    # Start the server
+    mcp.run(transport="stdio")

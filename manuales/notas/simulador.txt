@@ -1,0 +1,191 @@
+
+# Se agregan las columnas "Derivación (mils/km)" y "Radio Impacto (CEP)" 
+
+
+def generate_firing_table(self):
+    """Genera la tabla de tiro con columnas estándar + derivación y CEP para HERA."""
+    if not self.current_projectile:
+        messagebox.showerror("Error", "No hay proyectil cargado")
+        return
+    
+    try:
+        start = int(self.table_start_range.get())
+        end = int(self.table_end_range.get())
+        step = int(self.table_step.get())
+        azimuth = float(self.table_azimuth.get())
+        
+        from src.tables.firing_table_generator import FiringTableGenerator
+        
+        generator = FiringTableGenerator(
+            self.current_projectile,
+            self.atmosphere,
+            latitude=self.latitude.get(),
+            wind_speed=self.wind_speed.get(),
+            wind_direction=self.wind_direction.get(),
+            use_magnus=self.use_magnus.get(),
+            spin_rate_rpm=self.spin_rate_rpm.get(),
+            rifling_twist=self.rifling_twist.get()
+        )
+        
+        ranges = list(range(start, end + 1, step))
+        self.table_progress['maximum'] = len(ranges)
+        self.table_status.config(text=f"Generando tabla para {len(ranges)} alcances...")
+        
+        for item in self.table_tree.get_children():
+            self.table_tree.delete(item)
+        
+        table_data = []
+        unreachable_shown = set()
+        
+        # Determinar si es HERA M549A1 para columnas adicionales
+        proj_name = self.current_projectile.get('name', '').upper()
+        es_hera = 'HERA' in proj_name or 'M549' in proj_name
+        
+        # Ajustar columnas según proyectil
+        if es_hera:
+            columns = ('DIST', 'QE', 'TOF', 'DRIFT_MILS', 'DERIVACION', 'CEP', 'MAX_ALT', 'IMPACT_VEL')
+            self.table_tree['columns'] = columns
+            for col in columns:
+                self.table_tree.heading(col, text={
+                    'DIST': 'Alcance (m)',
+                    'QE': 'QE (mils)',
+                    'TOF': 'TOF (s)',
+                    'DRIFT_MILS': 'Drift (mils)',
+                    'DERIVACION': 'Derivación (mils/km)',
+                    'CEP': 'Radio Impacto (m)',
+                    'MAX_ALT': 'Alt. Máx (m)',
+                    'IMPACT_VEL': 'Vel. Impacto (m/s)'
+                }[col])
+                self.table_tree.column(col, width=90, anchor='center')
+        else:
+            columns = ('DIST', 'QE', 'TOF', 'DRIFT_MILS', 'DEFLEX_MILS', 'MAX_ALT', 'IMPACT_VEL')
+            self.table_tree['columns'] = columns
+            for col in columns:
+                self.table_tree.heading(col, text={
+                    'DIST': 'Alcance (m)',
+                    'QE': 'QE (mils)',
+                    'TOF': 'TOF (s)',
+                    'DRIFT_MILS': 'DRIFT (mils)',
+                    'DEFLEX_MILS': 'Deflexión (mils)',
+                    'MAX_ALT': 'Alt. Máx (m)',
+                    'IMPACT_VEL': 'Vel. Impacto (m/s)'
+                }[col])
+                self.table_tree.column(col, width=90, anchor='center')
+        
+        for i, target in enumerate(ranges):
+            self.table_status.config(text=f"Calculando {i+1}/{len(ranges)}: {target} m...")
+            self.table_progress['value'] = i + 1
+            self.root.update()
+            
+            # (el código de búsqueda de elevación se mantiene igual, no se modifica)
+            mode = self.search_mode.get()
+            elev = None
+            if mode == 'Ambos':
+                elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=45.0)
+                if elev is None:
+                    elev = generator.find_elevation_for_range(target, azimuth, min_elev=45.0, max_elev=85.0)
+            elif mode == 'Tiro tenso (preferido)':
+                elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=45.0)
+            elif mode == 'Tiro curvo':
+                elev = generator.find_elevation_for_range(target, azimuth, min_elev=45.0, max_elev=85.0)
+            else:
+                elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=85.0)
+            
+            if elev is None:
+                # ... manejo de error igual que antes ...
+                if target not in unreachable_shown:
+                    unreachable_shown.add(target)
+                    r_max = generator.simulate_trajectory(45.0, azimuth)['range']
+                    v0 = self.current_projectile['muzzle_velocity']
+                    drag_func = self.current_projectile['drag_function']
+                    suggestions = []
+                    if target > r_max:
+                        suggestions.append(f"❌ Alcance {target} m NO ALCANZABLE")
+                        suggestions.append(f"📊 Alcance máximo físico: {r_max:.0f} m")
+                        suggestions.append(f"🎯 Objetivo: {target:.0f} m (faltan {target - r_max:.0f} m)")
+                        suggestions.append("")
+                        suggestions.append("🔧 OPCIONES PARA AUMENTAR EL ALCANCE:")
+                        v0_needed = v0 * ((target / r_max) ** (1/1.8))
+                        suggestions.append(f"\n1. Aumentar velocidad inicial:")
+                        suggestions.append(f"   • Actual: {v0:.0f} m/s → Necesaria: ~{v0_needed:.0f} m/s")
+                        if drag_func == 'G1':
+                            r_g7_est = r_max * 1.4
+                            suggestions.append(f"\n2. Cambiar a modelo G7:")
+                            suggestions.append(f"   • Actual: G1 (~{r_max:.0f} m) → G7 (~{r_g7_est:.0f} m)")
+                            if r_g7_est >= target:
+                                suggestions.append(f"   ✅ ¡G7 SÍ alcanzaría {target} m!")
+                        bc_actual = self.current_projectile['ballistic_coefficient']
+                        bc_needed = bc_actual * (target / r_max) ** 0.5
+                        suggestions.append(f"\n3. Aumentar Coeficiente Balístico:")
+                        suggestions.append(f"   • Actual: {bc_actual:.3f} → Necesario: ~{bc_needed:.3f}")
+                        messagebox.showwarning(f"❌ Alcance {target} m NO ALCANZABLE", "\n".join(suggestions))
+                    else:
+                        suggestions.append(f"ℹ️ Alcance {target} m SÍ es alcanzable")
+                        suggestions.append(f"📊 Alcance máximo: {r_max:.0f} m")
+                        suggestions.append("")
+                        suggestions.append("🔧 CAMBIA EL MODO DE BÚSQUEDA:")
+                        if mode == 'Tiro tenso (preferido)':
+                            suggestions.append("   • Prueba con 'Tiro curvo' o 'Ambos'")
+                        elif mode == 'Tiro curvo':
+                            suggestions.append("   • Prueba con 'Tiro tenso' o 'Ambos'")
+                        else:
+                            suggestions.append("   • Verifica los límites de elevación")
+                        messagebox.showinfo(f"ℹ️ Alcance {target} m - Cambiar modo", "\n".join(suggestions))
+                self.table_status.config(text=f"Generación detenida en {target} m")
+                self.table_progress['value'] = self.table_progress['maximum']
+                break
+            
+            result = generator.simulate_trajectory(elev, azimuth)
+            qe_mils = elev * (6400 / 360)
+            drift_mils = (result['deflection'] / result['range']) * (6400 / (2 * np.pi))
+            
+            # --- CÁLCULOS ADICIONALES PARA HERA M549A1 ---
+            if es_hera:
+                alcance_km = result['range'] / 1000.0
+                derivacion_mils_km = drift_mils / alcance_km if alcance_km > 0 else 0
+                # Radio de impacto (CEP) estimado: fórmula empírica adaptada para HERA
+                # CEP (m) ≈ 0.0012 * alcance (m) + 0.4 * |drift_mils| + 2.5
+                cep_m = 0.0012 * result['range'] + 0.4 * abs(drift_mils) + 2.5
+                cep_m = round(cep_m, 1)
+                derivacion_mils_km = round(derivacion_mils_km, 3)
+            
+            deflex_m = result['deflection']
+            deflex_mils = (deflex_m / result['range']) * (6400 / (2 * np.pi))
+            
+            row_data = {
+                'DIST': int(round(result['range'])),
+                'QE': round(qe_mils, 1),
+                'TOF': round(result['time'], 1),
+                'DRIFT_MILS': round(drift_mils, 2),
+                'MAX_ALT': round(result['max_alt'], 1),
+                'IMPACT_VEL': round(result['impact_vel'], 1)
+            }
+            if es_hera:
+                row_data['DERIVACION'] = derivacion_mils_km
+                row_data['CEP'] = cep_m
+            else:
+                row_data['DEFLEX_MILS'] = round(deflex_mils, 2)
+            
+            table_data.append(row_data)
+            
+            # Insertar en la tabla según columnas
+            if es_hera:
+                self.table_tree.insert('', 'end', values=(
+                    row_data['DIST'], row_data['QE'], row_data['TOF'],
+                    row_data['DRIFT_MILS'], row_data['DERIVACION'], row_data['CEP'],
+                    row_data['MAX_ALT'], row_data['IMPACT_VEL']
+                ))
+            else:
+                self.table_tree.insert('', 'end', values=(
+                    row_data['DIST'], row_data['QE'], row_data['TOF'],
+                    row_data['DRIFT_MILS'], row_data['DEFLEX_MILS'],
+                    row_data['MAX_ALT'], row_data['IMPACT_VEL']
+                ))
+        
+        import pandas as pd
+        self.generated_table = pd.DataFrame(table_data)
+        self.table_status.config(text=f"Tabla generada: {len(table_data)} puntos calculados.")
+        
+    except Exception as e:
+        messagebox.showerror("Error", f"Error al generar tabla: {str(e)}")
+        self.table_status.config(text="Error en la generación.")

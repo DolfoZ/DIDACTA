@@ -1,0 +1,3545 @@
+BALISTIC
+# -*- coding: utf-8 -*-
+"""
+================================================================================
+BALLISTIC LAB - SIMULADOR DE TRAYECTORIAS BALÍSTICAS
+================================================================================
+Sistema completo de simulación balística con interfaz gráfica.
+Incluye: atmósfera USSA 1976, gravedad WGS84, viento balístico, 
+efecto Magnus, arrastre por régimen, editor de fórmulas, auditoría 
+con agentes y generador automático de tablas de tiro.
+================================================================================
+"""
+
+# ================================================================================
+# IMPORTS
+# ================================================================================
+import json
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from scipy.integrate import solve_ivp
+from src.dynamics.forces import Forces
+from src.dynamics.rotation import RotationTransform
+from src.aerodynamics.geometry import ProjectileGeometry
+from src.aerodynamics.drag_coefficient import DragCoefficient
+from src.atmosphere.molecular_air import MolecularAir
+from src.tables.firing_table_generator import FiringTableGenerator
+from mpl_toolkits.mplot3d import Axes3D
+import os
+
+
+# ================================================================================
+# CLASE PRINCIPAL: BallisticGUI
+# ================================================================================
+class BallisticGUI:
+    
+    # ============================================================================
+    # CONSTRUCTOR E INICIALIZACIÓN
+    # ============================================================================
+    def __init__(self, root):
+        
+        # ------------------------------------------------------------------------
+        # Variables de control ambiental
+        # ------------------------------------------------------------------------
+        self.humidity = tk.DoubleVar(value=0.5)
+        self.co2_ppm = tk.DoubleVar(value=400.0)
+        self.wind_speed = tk.DoubleVar(value=0.0)
+        self.wind_direction = tk.DoubleVar(value=0.0)
+        self.spin_rate_rpm = tk.DoubleVar(value=15000.0)  # Valor realista para artillería
+        self.rifling_twist = tk.DoubleVar(value=20.0)
+        self.use_magnus = tk.BooleanVar(value=False)
+
+        # ------------------------------------------------------------------------
+        # Configuración de ventana principal
+        # ------------------------------------------------------------------------
+        self.root = root
+        self.root.title("Ballistic Lab - Simulador de Trayectorias")
+        self.root.geometry("1400x1000")
+        
+        # ------------------------------------------------------------------------
+        # Variables de proyectil y tiro
+        # ------------------------------------------------------------------------
+        self.projectile_file = tk.StringVar(value="data/projectiles/M107.json")
+        self.elevation = tk.DoubleVar(value=45.0)
+        self.azimuth = tk.DoubleVar(value=0.0)
+        self.latitude = tk.DoubleVar(value=45.0)
+        self.temp_offset = tk.DoubleVar(value=0.0)
+        self.selected_charge = tk.StringVar(value="")
+        self.drag_function = tk.StringVar(value="G1")
+        
+        # ------------------------------------------------------------------------
+        # Variables de estado de simulación
+        # ------------------------------------------------------------------------
+        self.trajectory_data = None
+        self.current_projectile = None
+        self.atmosphere = MolecularAir()
+        self.draggable_circle = None
+        self.cursor_annotation = None
+        self.drag_active = False
+        self.reference_data = None
+        self.initial_results = None
+
+        # Variables del Planificador
+        self.include_105mm = tk.BooleanVar(value=True)
+        self.include_155mm = tk.BooleanVar(value=True)
+        self.tiro_tenso_only = tk.BooleanVar(value=False)
+        self.tiro_curvo_only = tk.BooleanVar(value=False)
+        self.best_solution = None
+
+        # Variables del Simulador 3D
+        self.correction_elevation = tk.DoubleVar(value=0.0)
+        self.correction_azimuth = tk.DoubleVar(value=0.0)
+        self.original_impact = None
+        self.corrected_impact = None
+
+        # Variables de espoleta
+        self.fuze_type = tk.StringVar(value="PDA")
+        self.fuze_time = tk.DoubleVar(value=15.0)  # segundos, solo para TIA
+        
+        # ------------------------------------------------------------------------
+        # Coeficientes del Editor de Fórmulas
+        # ------------------------------------------------------------------------
+        self.formula_coeffs = {
+            'range': {'k': 0.0000185, 'a': 1.80, 'b': 0.70},
+            'time': {'k': 0.074, 'c': 0.90, 'd': 0.60},
+            'deflection': {'e': 1.84},
+            'altitude': {'k': 0.000012, 'f': 1.70, 'g': 0.55}
+        }
+        
+        self.coeff_names = {
+            'range_k': 'Factor de escala de alcance',
+            'range_a': 'Exponente de velocidad (sensibilidad balística)',
+            'range_b': 'Exponente angular (eficiencia del ángulo)',
+            'time_k': 'Factor de escala temporal',
+            'time_c': 'Exponente de velocidad temporal',
+            'time_d': 'Exponente angular temporal',
+            'defl_e': 'Factor de amortiguamiento de Coriolis',
+            'alt_k': 'Factor de escala de altitud',
+            'alt_f': 'Exponente de velocidad vertical',
+            'alt_g': 'Exponente angular vertical'
+        }
+        
+        self.suggested_values = {}
+        
+        # ------------------------------------------------------------------------
+        # Inicializar interfaz y cargar proyectiles
+        # ------------------------------------------------------------------------
+        self.setup_ui()
+        self.load_projectile_list()
+    
+
+    # ============================================================================
+    # CONFIGURACIÓN DE INTERFAZ DE USUARIO (UI)
+    # ============================================================================
+    def setup_ui(self):
+        """Configura todos los elementos de la interfaz gráfica."""
+        
+        # ------------------------------------------------------------------------
+        # Estilos globales
+        # ------------------------------------------------------------------------
+        style = ttk.Style()
+        style.configure("TCombobox", font=("Arial", 11))
+        style.configure("TEntry", font=("Arial", 11))
+        style.configure("TButton", font=("Arial", 11, "bold"))
+        style.configure("TLabel", font=("Arial", 11))
+        
+        # ------------------------------------------------------------------------
+        # Panel izquierdo (controles)
+        # ------------------------------------------------------------------------
+        left_frame = ttk.Frame(self.root, padding="10", width=400)
+        left_frame.grid(row=0, column=0, sticky="nsew")
+        left_frame.grid_propagate(False)
+        
+        # ------------------------------------------------------------------------
+        # Panel derecho (notebook con pestañas)
+        # ------------------------------------------------------------------------
+        right_frame = ttk.Frame(self.root, padding="10")
+        right_frame.grid(row=0, column=1, sticky="nsew")
+        
+        self.root.grid_columnconfigure(1, weight=3)
+        self.root.grid_rowconfigure(0, weight=1)
+        
+        row = 0
+        
+        # ------------------------------------------------------------------------
+        # Sección: Selección de Proyectil
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Proyectil:", font=("Arial", 12, "bold")).grid(row=row, column=0, sticky="w", pady=5)
+        row += 1
+        self.projectile_combo = ttk.Combobox(left_frame, textvariable=self.projectile_file, width=35)
+        self.projectile_combo.grid(row=row, column=0, sticky="ew", pady=2)
+        self.projectile_combo.bind("<<ComboboxSelected>>", self.on_projectile_selected)
+        ttk.Button(left_frame, text="Cargar Archivo", command=self.load_custom_file).grid(row=row, column=1, padx=5)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Sección: Selector de Carga
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Carga:", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=2)
+        self.charge_combo = ttk.Combobox(left_frame, width=20, state="readonly")
+        self.charge_combo.grid(row=row, column=1, sticky="w", pady=2)
+        self.charge_combo.bind("<<ComboboxSelected>>", self.on_charge_selected)
+        row += 1
+        
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+
+        # ------------------------------------------------------------------------
+        # Sección: Selector de Arrastre
+        # ------------------------------------------------------------------------
+
+        ttk.Label(left_frame, text="Modelo de Arrastre:", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=2)
+        self.drag_combo = ttk.Combobox(left_frame, textvariable=self.drag_function, 
+                                    values=['G1', 'G2', 'G5', 'G6', 'G7'], 
+                                    width=15, state='readonly')
+        self.drag_combo.grid(row=row, column=1, sticky="w", pady=2)
+        self.drag_combo.bind("<<ComboboxSelected>>", self.on_drag_changed)
+        row += 1
+
+        # ------------------------------------------------------------------------
+        # Sección: Selector de Espoleta
+        # ------------------------------------------------------------------------
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        ttk.Label(left_frame, text="Tipo de Espoleta:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        self.fuze_combo = ttk.Combobox(left_frame, textvariable=self.fuze_type,
+                                       values=['PDA', 'TIA'],
+                                       width=15, state='readonly')
+        self.fuze_combo.grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        self.fuze_combo.bind("<<ComboboxSelected>>", self.on_fuze_changed)
+        row += 1
+        
+        # Frame para ajuste de tiempo TIA (inicialmente oculto)
+        self.tia_frame = ttk.Frame(left_frame)
+        self.tia_frame.grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        self.tia_frame.grid_remove()
+        
+        ttk.Label(self.tia_frame, text="Ajuste de Tiempo TIA (s):", font=("Arial", 10)).grid(row=0, column=0, sticky="w", padx=(0,5))
+        self.fuze_time_entry = ttk.Entry(self.tia_frame, textvariable=self.fuze_time, width=8)
+        self.fuze_time_entry.grid(row=0, column=1, sticky="w")
+        row += 1
+
+        # ------------------------------------------------------------------------
+        # Sección: Parámetros de Tiro
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Parámetros de Tiro:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Elevación (grados):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.elevation, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Azimuth (grados):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.azimuth, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Sección: Condiciones Ambientales Básicas
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Condiciones Ambientales:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Latitud (grados):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.latitude, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Offset temperatura (K):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.temp_offset, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Humedad relativa (0-1):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.humidity, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="CO₂ (ppm):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.co2_ppm, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Sección: Viento Balístico
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Viento Balístico:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Velocidad viento (m/s):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.wind_speed, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Dirección viento (°):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.wind_direction, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Sección: Efecto Magnus
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Efecto Magnus:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        ttk.Checkbutton(left_frame, text="Activar efecto Magnus", variable=self.use_magnus).grid(row=row, column=0, columnspan=2, sticky="w", pady=2)
+        row += 1
+        
+        ttk.Label(left_frame, text="Spin rate (RPM):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.spin_rate_rpm, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+        
+        ttk.Label(left_frame, text="Paso estriado (cal):", font=("Arial", 11)).grid(row=row, column=0, sticky="w")
+        ttk.Entry(left_frame, textvariable=self.rifling_twist, width=15).grid(row=row, column=1, sticky="w", padx=5)
+        row += 1
+
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Botones de acción principales
+        # ------------------------------------------------------------------------
+        ttk.Button(left_frame, text="EVALUAR", command=self.simulate_initial, width=20).grid(row=row, column=0, columnspan=2, pady=10)
+        row += 1
+        ttk.Button(left_frame, text="Exportar CSV", command=self.export_csv, width=20).grid(row=row, column=0, columnspan=2, pady=5)
+        row += 1
+        
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Panel de Información del Proyectil
+        # ------------------------------------------------------------------------
+        ttk.Label(left_frame, text="Información del Proyectil:", font=("Arial", 12, "bold")).grid(row=row, column=0, columnspan=2, sticky="w", pady=5)
+        row += 1
+        
+        self.projectile_info = tk.Text(left_frame, height=9, width=45, state="disabled", font=("Arial", 10))
+        self.projectile_info.grid(row=row, column=0, columnspan=2, sticky="ew", pady=5)
+        row += 1
+        
+        ttk.Separator(left_frame, orient="horizontal").grid(row=row, column=0, columnspan=2, sticky="ew", pady=10)
+        row += 1
+        
+        # ------------------------------------------------------------------------
+        # Notebook (pestañas derechas)
+        # ------------------------------------------------------------------------
+        self.notebook = ttk.Notebook(right_frame)
+        self.notebook.pack(fill="both", expand=True)
+        
+        # ------------------------------------------------------------------------
+        # Pestaña 1: Gráficos Interactivos (REDISEÑADA)
+        # ------------------------------------------------------------------------
+        self.graph_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.graph_frame, text="Gráficos Interactivos")
+
+        # Panel principal horizontal: Gráficos (izq) + Resultados (der)
+        main_panel = ttk.PanedWindow(self.graph_frame, orient=tk.HORIZONTAL)
+        main_panel.pack(fill="both", expand=True)
+
+        # Frame izquierdo: Contiene el gráfico
+        inner_left_frame = ttk.Frame(main_panel)
+        main_panel.add(inner_left_frame, weight=3)
+
+        # Frame para el gráfico de Trayectoria
+        traj_frame = ttk.LabelFrame(inner_left_frame, text="Trayectoria", padding="5")
+        traj_frame.pack(fill="both", expand=True)
+
+        # Crear figura con dos subplots
+        self.fig, (self.ax1, self.ax2) = plt.subplots(2, 1, figsize=(7, 6))
+        self.fig.subplots_adjust(hspace=0.25, left=0.12, right=0.95, top=0.95, bottom=0.08)
+
+        self.canvas = FigureCanvasTkAgg(self.fig, master=traj_frame)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # Frame derecho: Panel de Resultados (SOLO DATOS DE VUELO)
+        right_frame = ttk.Frame(main_panel, width=250)
+        main_panel.add(right_frame, weight=1)
+
+        ttk.Label(right_frame, text="📊 RESULTADOS", font=("Arial", 13, "bold")).pack(pady=(10, 5))
+        ttk.Separator(right_frame, orient="horizontal").pack(fill="x", padx=10, pady=5)
+
+        flight_frame = ttk.LabelFrame(right_frame, text="Datos de Vuelo", padding="10")
+        flight_frame.pack(fill="x", padx=10, pady=5)
+
+        self.result_range_label = ttk.Label(flight_frame, text="Alcance: --- m", font=("Arial", 10, "bold"))
+        self.result_range_label.pack(anchor="w", pady=3)
+
+        self.result_deflection_label = ttk.Label(flight_frame, text="Deflexión: --- m", font=("Arial", 10))
+        self.result_deflection_label.pack(anchor="w", pady=3)
+
+        self.result_time_label = ttk.Label(flight_frame, text="Tiempo vuelo: --- s", font=("Arial", 10))
+        self.result_time_label.pack(anchor="w", pady=3)
+
+        self.result_maxalt_label = ttk.Label(flight_frame, text="Altitud máx: --- m", font=("Arial", 10))
+        self.result_maxalt_label.pack(anchor="w", pady=3)
+
+        self.result_impactvel_label = ttk.Label(flight_frame, text="Velocidad final: --- m/s", font=("Arial", 10))
+        self.result_impactvel_label.pack(anchor="w", pady=3)
+
+        self.result_mach_label = ttk.Label(flight_frame, text="Mach final: ---", font=("Arial", 10))
+        self.result_mach_label.pack(anchor="w", pady=3)
+
+        # Panel de explicación (debajo de los resultados)
+        explanation_frame = ttk.LabelFrame(right_frame, text="EXPLICACION", padding="10")
+        explanation_frame.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+
+        self.explanation_text = tk.Text(explanation_frame, height=6, font=("Arial", 10), 
+                                        wrap="word", bg="#f8f9fa", fg="#212529", 
+                                        relief="flat", borderwidth=0)
+        self.explanation_text.pack(fill="both", expand=True)
+
+        self.explanation_text.tag_configure("bold", font=("Arial", 10, "bold"))
+        self.explanation_text.tag_configure("highlight", foreground="#0066cc")
+        self.explanation_text.tag_configure("tip", foreground="#28a745", font=("Arial", 9, "italic"))
+
+        # Vincular eventos para el punto arrastrable
+        self.canvas.mpl_connect('button_press_event', self.on_press)
+        self.canvas.mpl_connect('button_release_event', self.on_release)
+        self.canvas.mpl_connect('motion_notify_event', self.on_motion)
+
+        # ------------------------------------------------------------------------
+        # Pestaña 3: Tabla de Trayectoria
+        # ------------------------------------------------------------------------
+        self.table_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.table_frame, text="Tabla de Trayectoria")
+        
+        columns = ('time', 'range', 'impact_range', 'deflection', 'altitude', 'speed', 'mach')
+        self.tree = ttk.Treeview(self.table_frame, columns=columns, show='headings', height=25)
+        
+        self.tree.heading('time', text='Tiempo (s)')
+        self.tree.heading('range', text='Alcance parc. (m)')
+        self.tree.heading('impact_range', text='Rango Impacto (m)')
+        self.tree.heading('deflection', text='Deflexión (m)')
+        self.tree.heading('altitude', text='Altitud (m)')
+        self.tree.heading('speed', text='Velocidad (m/s)')
+        self.tree.heading('mach', text='Mach')
+        
+        for col in columns:
+            self.tree.column(col, width=95, anchor='center')
+        
+        scrollbar = ttk.Scrollbar(self.table_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        
+        # ------------------------------------------------------------------------
+        # Pestaña 4: Editor de Fórmulas
+        # ------------------------------------------------------------------------
+        self.formulas_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.formulas_frame, text="Editor de Fórmulas")
+        
+        formulas_paned = ttk.PanedWindow(self.formulas_frame, orient=tk.HORIZONTAL)
+        formulas_paned.pack(fill="both", expand=True)
+    
+        # ========================================================================
+        # PANEL IZQUIERDO DEL EDITOR: FÓRMULAS
+        # ========================================================================
+        left_formulas = ttk.Frame(formulas_paned)
+        formulas_paned.add(left_formulas, weight=1)
+        
+        formulas_canvas = tk.Canvas(left_formulas)
+        scrollbar_left = ttk.Scrollbar(left_formulas, orient="vertical", command=formulas_canvas.yview)
+        formulas_scrollable = ttk.Frame(formulas_canvas)
+        
+        formulas_scrollable.bind(
+            "<Configure>",
+            lambda e: formulas_canvas.configure(scrollregion=formulas_canvas.bbox("all"))
+        )
+        
+        formulas_canvas.create_window((0, 0), window=formulas_scrollable, anchor="nw")
+        formulas_canvas.configure(yscrollcommand=scrollbar_left.set)
+        
+        formulas_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar_left.pack(side="right", fill="y")
+        
+        ttk.Label(formulas_scrollable, text="FÓRMULAS DE CÁLCULO", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # ------------------------------------------------------------------------
+        # Fórmula: ALCANCE
+        # ------------------------------------------------------------------------
+        range_frame = ttk.LabelFrame(formulas_scrollable, text="ALCANCE: R = k₁ × v₀^a × sin(2θ)^b", padding=10)
+        range_frame.pack(fill="x", padx=10, pady=5)
+        
+        frame_k1 = ttk.Frame(range_frame)
+        frame_k1.pack(fill="x", pady=3)
+        ttk.Label(frame_k1, text="k₁:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_range_k = ttk.Entry(frame_k1, width=12)
+        self.coeff_range_k.insert(0, str(self.formula_coeffs['range']['k']))
+        self.coeff_range_k.pack(side="left", padx=5)
+        ttk.Label(frame_k1, text=self.coeff_names['range_k'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.range_k_effect = ttk.Label(frame_k1, text="", font=("Arial", 9))
+        self.range_k_effect.pack(side="left", padx=10)
+        self.coeff_range_k.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_a = ttk.Frame(range_frame)
+        frame_a.pack(fill="x", pady=3)
+        ttk.Label(frame_a, text="a:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_range_a = ttk.Entry(frame_a, width=12)
+        self.coeff_range_a.insert(0, str(self.formula_coeffs['range']['a']))
+        self.coeff_range_a.pack(side="left", padx=5)
+        ttk.Label(frame_a, text=self.coeff_names['range_a'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.range_a_effect = ttk.Label(frame_a, text="", font=("Arial", 9))
+        self.range_a_effect.pack(side="left", padx=10)
+        self.coeff_range_a.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_b = ttk.Frame(range_frame)
+        frame_b.pack(fill="x", pady=3)
+        ttk.Label(frame_b, text="b:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_range_b = ttk.Entry(frame_b, width=12)
+        self.coeff_range_b.insert(0, str(self.formula_coeffs['range']['b']))
+        self.coeff_range_b.pack(side="left", padx=5)
+        ttk.Label(frame_b, text=self.coeff_names['range_b'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.range_b_effect = ttk.Label(frame_b, text="", font=("Arial", 9))
+        self.range_b_effect.pack(side="left", padx=10)
+        self.coeff_range_b.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        self.range_preview = ttk.Label(range_frame, text="", font=("Arial", 10, "bold"), foreground="blue")
+        self.range_preview.pack(pady=3)
+        
+        # ------------------------------------------------------------------------
+        # Fórmula: TIEMPO
+        # ------------------------------------------------------------------------
+        time_frame = ttk.LabelFrame(formulas_scrollable, text="TIEMPO: T = k₂ × v₀^c × sin(θ)^d", padding=10)
+        time_frame.pack(fill="x", padx=10, pady=5)
+        
+        frame_k2 = ttk.Frame(time_frame)
+        frame_k2.pack(fill="x", pady=3)
+        ttk.Label(frame_k2, text="k₂:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_time_k = ttk.Entry(frame_k2, width=12)
+        self.coeff_time_k.insert(0, str(self.formula_coeffs['time']['k']))
+        self.coeff_time_k.pack(side="left", padx=5)
+        ttk.Label(frame_k2, text=self.coeff_names['time_k'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.time_k_effect = ttk.Label(frame_k2, text="", font=("Arial", 9))
+        self.time_k_effect.pack(side="left", padx=10)
+        self.coeff_time_k.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_c = ttk.Frame(time_frame)
+        frame_c.pack(fill="x", pady=3)
+        ttk.Label(frame_c, text="c:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_time_c = ttk.Entry(frame_c, width=12)
+        self.coeff_time_c.insert(0, str(self.formula_coeffs['time']['c']))
+        self.coeff_time_c.pack(side="left", padx=5)
+        ttk.Label(frame_c, text=self.coeff_names['time_c'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.time_c_effect = ttk.Label(frame_c, text="", font=("Arial", 9))
+        self.time_c_effect.pack(side="left", padx=10)
+        self.coeff_time_c.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_d = ttk.Frame(time_frame)
+        frame_d.pack(fill="x", pady=3)
+        ttk.Label(frame_d, text="d:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_time_d = ttk.Entry(frame_d, width=12)
+        self.coeff_time_d.insert(0, str(self.formula_coeffs['time']['d']))
+        self.coeff_time_d.pack(side="left", padx=5)
+        ttk.Label(frame_d, text=self.coeff_names['time_d'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.time_d_effect = ttk.Label(frame_d, text="", font=("Arial", 9))
+        self.time_d_effect.pack(side="left", padx=10)
+        self.coeff_time_d.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        self.time_preview = ttk.Label(time_frame, text="", font=("Arial", 10, "bold"), foreground="blue")
+        self.time_preview.pack(pady=3)
+        
+        # ------------------------------------------------------------------------
+        # Fórmula: DEFLEXIÓN
+        # ------------------------------------------------------------------------
+        defl_frame = ttk.LabelFrame(formulas_scrollable, text="DEFLEXIÓN: D = 2ω·sin(φ)·v·T²/e", padding=10)
+        defl_frame.pack(fill="x", padx=10, pady=5)
+        
+        frame_e = ttk.Frame(defl_frame)
+        frame_e.pack(fill="x", pady=3)
+        ttk.Label(frame_e, text="e:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_defl_e = ttk.Entry(frame_e, width=12)
+        self.coeff_defl_e.insert(0, str(self.formula_coeffs['deflection']['e']))
+        self.coeff_defl_e.pack(side="left", padx=5)
+        ttk.Label(frame_e, text=self.coeff_names['defl_e'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.defl_e_effect = ttk.Label(frame_e, text="", font=("Arial", 9))
+        self.defl_e_effect.pack(side="left", padx=10)
+        self.coeff_defl_e.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        self.defl_preview = ttk.Label(defl_frame, text="", font=("Arial", 10, "bold"), foreground="blue")
+        self.defl_preview.pack(pady=3)
+        
+        # ------------------------------------------------------------------------
+        # Fórmula: ALTITUD MÁXIMA
+        # ------------------------------------------------------------------------
+        alt_frame = ttk.LabelFrame(formulas_scrollable, text="ALTITUD MÁXIMA: H = k₃ × v₀^f × sin²(θ)^g", padding=10)
+        alt_frame.pack(fill="x", padx=10, pady=5)
+        
+        frame_k3 = ttk.Frame(alt_frame)
+        frame_k3.pack(fill="x", pady=3)
+        ttk.Label(frame_k3, text="k₃:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_alt_k = ttk.Entry(frame_k3, width=12)
+        self.coeff_alt_k.insert(0, str(self.formula_coeffs['altitude']['k']))
+        self.coeff_alt_k.pack(side="left", padx=5)
+        ttk.Label(frame_k3, text=self.coeff_names['alt_k'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.alt_k_effect = ttk.Label(frame_k3, text="", font=("Arial", 9))
+        self.alt_k_effect.pack(side="left", padx=10)
+        self.coeff_alt_k.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_f = ttk.Frame(alt_frame)
+        frame_f.pack(fill="x", pady=3)
+        ttk.Label(frame_f, text="f:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_alt_f = ttk.Entry(frame_f, width=12)
+        self.coeff_alt_f.insert(0, str(self.formula_coeffs['altitude']['f']))
+        self.coeff_alt_f.pack(side="left", padx=5)
+        ttk.Label(frame_f, text=self.coeff_names['alt_f'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.alt_f_effect = ttk.Label(frame_f, text="", font=("Arial", 9))
+        self.alt_f_effect.pack(side="left", padx=10)
+        self.coeff_alt_f.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        frame_g = ttk.Frame(alt_frame)
+        frame_g.pack(fill="x", pady=3)
+        ttk.Label(frame_g, text="g:", font=("Arial", 11, "bold"), width=5).pack(side="left")
+        self.coeff_alt_g = ttk.Entry(frame_g, width=12)
+        self.coeff_alt_g.insert(0, str(self.formula_coeffs['altitude']['g']))
+        self.coeff_alt_g.pack(side="left", padx=5)
+        ttk.Label(frame_g, text=self.coeff_names['alt_g'], font=("Arial", 9, "italic")).pack(side="left", padx=10)
+        self.alt_g_effect = ttk.Label(frame_g, text="", font=("Arial", 9))
+        self.alt_g_effect.pack(side="left", padx=10)
+        self.coeff_alt_g.bind("<KeyRelease>", lambda e: self.update_formula_preview())
+        
+        self.alt_preview = ttk.Label(alt_frame, text="", font=("Arial", 10, "bold"), foreground="blue")
+        self.alt_preview.pack(pady=3)
+        
+        # ------------------------------------------------------------------------
+        # Botones del Editor de Fórmulas
+        # ------------------------------------------------------------------------
+        btn_left_frame = ttk.Frame(formulas_scrollable)
+        btn_left_frame.pack(pady=15)
+        ttk.Button(btn_left_frame, text="APLICAR FÓRMULAS", command=self.apply_formulas, width=22).pack(side="left", padx=5)
+        ttk.Button(btn_left_frame, text="RESTAURAR DEFECTO", command=self.restore_default_formulas, width=22).pack(side="left", padx=5)
+
+        # ========================================================================
+        # PANEL DERECHO DEL EDITOR: OBJETIVO DESEADO
+        # ========================================================================
+        right_formulas = ttk.Frame(formulas_paned)
+        formulas_paned.add(right_formulas, weight=1)
+        
+        ttk.Label(right_formulas, text="OBJETIVO DESEADO", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        target_main_frame = ttk.LabelFrame(right_formulas, text="Ingrese los valores objetivo:", padding=15)
+        target_main_frame.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Label(target_main_frame, text="Alcance objetivo (m):", font=("Arial", 11)).grid(row=0, column=0, sticky="w", pady=5)
+        self.target_range = ttk.Entry(target_main_frame, width=20, font=("Arial", 11))
+        self.target_range.grid(row=0, column=1, pady=5, padx=10)
+        
+        ttk.Label(target_main_frame, text="Tiempo objetivo (s):", font=("Arial", 11)).grid(row=1, column=0, sticky="w", pady=5)
+        self.target_time = ttk.Entry(target_main_frame, width=20, font=("Arial", 11))
+        self.target_time.grid(row=1, column=1, pady=5, padx=10)
+        
+        ttk.Label(target_main_frame, text="Deflexión objetivo (m):", font=("Arial", 11)).grid(row=2, column=0, sticky="w", pady=5)
+        self.target_deflection = ttk.Entry(target_main_frame, width=20, font=("Arial", 11))
+        self.target_deflection.grid(row=2, column=1, pady=5, padx=10)
+        
+        ttk.Button(target_main_frame, text="CALCULAR CÓMO LLEGAR", command=self.analyze_formula_target, width=25).grid(row=3, column=0, columnspan=2, pady=15)
+        
+        # ------------------------------------------------------------------------
+        # Paneles de resultados del Editor
+        # ------------------------------------------------------------------------
+        result_paned = ttk.PanedWindow(right_formulas, orient=tk.VERTICAL)
+        result_paned.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        top_frame = ttk.Frame(result_paned)
+        result_paned.add(top_frame, weight=1)
+        ttk.Label(top_frame, text="ANÁLISIS DE VARIABLES A MODIFICAR", font=("Arial", 10, "bold"), background="#e8f4e8").pack(anchor="w", pady=2)
+        self.analysis_result = tk.Text(top_frame, height=8, font=("Arial", 10), bg="#d4edda", wrap="word")
+        self.analysis_result.pack(fill="both", expand=True)
+        
+        bottom_frame = ttk.Frame(result_paned)
+        result_paned.add(bottom_frame, weight=1)
+        ttk.Label(bottom_frame, text="RESULTADOS DE SIMULACIÓN (Valores Sugeridos)", font=("Arial", 10, "bold"), background="#cce5ff").pack(anchor="w", pady=2)
+        self.target_results = tk.Text(bottom_frame, height=6, font=("Arial", 10), bg="#cce5ff", wrap="word")
+        self.target_results.pack(fill="both", expand=True)
+        
+        ttk.Button(right_formulas, text="APLICAR VALORES SUGERIDOS", command=self.apply_suggested_values, width=35).pack(pady=15)
+        
+        # ------------------------------------------------------------------------
+        # Pestaña 5: Auditoría
+        # ------------------------------------------------------------------------
+        self.audit_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.audit_frame, text="Auditoría")
+        
+
+       
+        # ------------------------------------------------------------------------
+        # Pestaña 6: Generador de Tablas
+        # ------------------------------------------------------------------------
+        self.table_gen_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.table_gen_frame, text="Generador de Tablas")
+        
+        self.setup_table_generator_ui()
+
+        # ------------------------------------------------------------------------
+        # Pestaña 7: Planificador de Misión
+        # ------------------------------------------------------------------------
+        self.planner_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.planner_frame, text="Planificador")
+        
+        self.setup_planner_ui()     
+
+        # ------------------------------------------------------------------------
+        # Pestaña 8: Simulador 3D de Corrección
+        # ------------------------------------------------------------------------
+        self.sim3d_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.sim3d_frame, text="Simulador 3D")
+
+        self.setup_3d_simulator_ui()    
+
+        # ------------------------------------------------------------------------
+        # Configuración interna de Auditoría
+        # ------------------------------------------------------------------------
+        audit_paned = ttk.PanedWindow(self.audit_frame, orient=tk.HORIZONTAL)
+        audit_paned.pack(fill="both", expand=True)
+        
+        left_audit = ttk.Frame(audit_paned)
+        right_audit = ttk.Frame(audit_paned)
+        audit_paned.add(left_audit, weight=1)
+        audit_paned.add(right_audit, weight=1)
+        
+        ttk.Label(left_audit, text="Parámetros de Cálculo (EDITABLES):", font=("Arial", 12, "bold")).pack(pady=5)
+        ttk.Label(left_audit, text="(Modifica los valores y presiona APLICAR)", font=("Arial", 10)).pack()
+        
+        params_frame = ttk.Frame(left_audit)
+        params_frame.pack(fill="x", padx=10, pady=10)
+        
+        ttk.Label(params_frame, text="Velocidad inicial (m/s):", font=("Arial", 11)).grid(row=0, column=0, sticky="w", pady=2)
+        self.audit_v0 = ttk.Entry(params_frame, width=15)
+        self.audit_v0.grid(row=0, column=1, pady=2)
+        
+        ttk.Label(params_frame, text="Elevación (grados):", font=("Arial", 11)).grid(row=1, column=0, sticky="w", pady=2)
+        self.audit_elev = ttk.Entry(params_frame, width=15)
+        self.audit_elev.grid(row=1, column=1, pady=2)
+        
+        ttk.Label(params_frame, text="Masa (kg):", font=("Arial", 11)).grid(row=2, column=0, sticky="w", pady=2)
+        self.audit_mass = ttk.Entry(params_frame, width=15)
+        self.audit_mass.grid(row=2, column=1, pady=2)
+        
+        ttk.Label(params_frame, text="Coef. Balístico:", font=("Arial", 11)).grid(row=3, column=0, sticky="w", pady=2)
+        self.audit_bc = ttk.Entry(params_frame, width=15)
+        self.audit_bc.grid(row=3, column=1, pady=2)
+        
+        ttk.Label(params_frame, text="Latitud (grados):", font=("Arial", 11)).grid(row=4, column=0, sticky="w", pady=2)
+        self.audit_lat = ttk.Entry(params_frame, width=15)
+        self.audit_lat.grid(row=4, column=1, pady=2)
+        
+        ttk.Button(left_audit, text="APLICAR CAMBIOS Y SIMULAR", command=self.audit_apply_and_simulate).pack(pady=5)
+        
+        audit_result_paned = ttk.PanedWindow(left_audit, orient=tk.VERTICAL)
+        audit_result_paned.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        top_result_frame = ttk.Frame(audit_result_paned)
+        audit_result_paned.add(top_result_frame, weight=1)
+        ttk.Label(top_result_frame, text="QUÉ DEBO CAMBIAR:", font=("Arial", 10, "bold"), background="#e8f4e8").pack(anchor="w")
+        self.audit_what_to_change = tk.Text(top_result_frame, height=6, font=("Arial", 10), bg="#d4edda", wrap="word")
+        self.audit_what_to_change.pack(fill="both", expand=True)
+        
+        bottom_result_frame = ttk.Frame(audit_result_paned)
+        audit_result_paned.add(bottom_result_frame, weight=1)
+        ttk.Label(bottom_result_frame, text="RESULTADOS APLICADOS:", font=("Arial", 10, "bold"), background="#e8f4e8").pack(anchor="w")
+        self.audit_results_applied = tk.Text(bottom_result_frame, height=6, font=("Arial", 10), bg="#cce5ff", wrap="word")
+        self.audit_results_applied.pack(fill="both", expand=True)
+        
+        ttk.Label(right_audit, text="Explicación de Cálculos:", font=("Arial", 12, "bold")).pack(pady=5)
+        ttk.Label(right_audit, text="(Escribe tu pregunta sobre el resultado)", font=("Arial", 10)).pack()
+        
+        query_top = ttk.Frame(right_audit)
+        query_top.pack(fill="x", padx=10, pady=5)
+        
+        ttk.Label(query_top, text="Pregunta:", font=("Arial", 11)).pack(side=tk.LEFT)
+        self.audit_entry = ttk.Entry(query_top, width=35)
+        self.audit_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(query_top, text="Explicar", command=self.audit_query).pack(side=tk.LEFT)
+        
+        self.audit_text = tk.Text(right_audit, font=("Arial", 11), bg="#fff8e7", state="disabled")
+        self.audit_text.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        self.audit_text.config(state="normal")
+        self.audit_text.insert(1.0, "EJEMPLOS DE PREGUNTAS:\n\n")
+        self.audit_text.insert(tk.END, "• ¿Por qué el tiempo es 50.15 s?\n")
+        self.audit_text.insert(tk.END, "• ¿Cómo se calcula el alcance?\n")
+        self.audit_text.insert(tk.END, "• ¿Qué parámetro debo modificar para\n  aumentar el alcance?\n")
+        self.audit_text.insert(tk.END, "• Explica el cálculo de la velocidad\n  de impacto\n")
+        self.audit_text.config(state="disabled")
+
+    def _get_recommended_drag(self, proj_name):
+        """Devuelve el modelo G recomendado según el nombre del proyectil."""
+        name_upper = proj_name.upper()
+        # Proyectiles de bajo arrastre / alcance extendido → G7
+        if any(x in name_upper for x in ['HERA', 'RAP', 'M549', 'M864', 'RAAM', 'DPICM', 'M795']):
+            return 'G7'
+        # Proyectiles estándar de base plana → G1
+        elif any(x in name_upper for x in ['M107', 'M106', 'HE M1', 'ILLUM', 'SMOKE', 'HC', 'M1 ']):
+            return 'G1'
+        else:
+            return 'G1'  # por defecto conservador
+    
+
+    # ============================================================================
+    # MÉTODOS DEL EDITOR DE FÓRMULAS
+    # ============================================================================
+    def analyze_formula_target(self):
+        """Analiza qué variables modificar para alcanzar los objetivos"""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Ejecuta una simulación primero")
+            return
+        
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        current_range = np.sqrt(y[0, -1]**2 + y[1, -1]**2)
+        current_time = t[-1]
+        current_defl = y[1, -1]
+        
+        v0 = self.current_projectile['muzzle_velocity']
+        elev = self.elevation.get()
+        lat = self.latitude.get()
+        
+        analysis_text = ""
+        self.suggested_values = {}
+        
+        # Analizar alcance
+        if self.target_range.get():
+            target = float(self.target_range.get())
+            
+            a_actual = self.formula_coeffs['range']['a']
+            b_actual = self.formula_coeffs['range']['b']
+            denominador = (v0 ** a_actual) * (np.sin(2 * np.radians(elev)) ** b_actual)
+            k1_needed = target / denominador
+            
+            analysis_text += f"ALCANCE OBJETIVO: {target:.0f} m (actual: {current_range:.0f} m)\n"
+            analysis_text += "-" * 40 + "\n"
+            
+            self.suggested_values['range_k'] = k1_needed
+            analysis_text += f"• k₁ (Factor de escala): {k1_needed:.8f}\n"
+            analysis_text += f"• a (Exponente velocidad): {a_actual:.3f} (mantener)\n"
+            analysis_text += f"• b (Exponente angular): {b_actual:.3f} (mantener)\n\n"
+            
+            k1_temp = k1_needed
+            a_temp = a_actual
+            b_temp = b_actual
+        else:
+            k1_temp = self.formula_coeffs['range']['k']
+            a_temp = self.formula_coeffs['range']['a']
+            b_temp = self.formula_coeffs['range']['b']
+        
+        # Analizar tiempo
+        if self.target_time.get():
+            target = float(self.target_time.get())
+            
+            c_actual = self.formula_coeffs['time']['c']
+            d_actual = self.formula_coeffs['time']['d']
+            denominador = (v0 ** c_actual) * (np.sin(np.radians(elev)) ** d_actual)
+            k2_needed = target / denominador
+            
+            analysis_text += f"TIEMPO OBJETIVO: {target:.2f} s (actual: {current_time:.2f} s)\n"
+            analysis_text += "-" * 40 + "\n"
+            
+            self.suggested_values['time_k'] = k2_needed
+            analysis_text += f"• k₂ (Factor escala temporal): {k2_needed:.6f}\n"
+            analysis_text += f"• c (Exponente velocidad): {c_actual:.3f} (mantener)\n"
+            analysis_text += f"• d (Exponente angular): {d_actual:.3f} (mantener)\n\n"
+            
+            k2_temp = k2_needed
+            c_temp = c_actual
+            d_temp = d_actual
+        else:
+            k2_temp = self.formula_coeffs['time']['k']
+            c_temp = self.formula_coeffs['time']['c']
+            d_temp = self.formula_coeffs['time']['d']
+        
+        # Analizar deflexión
+        if self.target_deflection.get():
+            target = float(self.target_deflection.get())
+            
+            e_actual = self.formula_coeffs['deflection']['e']
+            omega = 7.2921159e-5
+            v_avg = current_range / current_time
+            e_needed = (2 * omega * np.sin(np.radians(lat)) * v_avg * (current_time ** 2)) / target
+            
+            analysis_text += f"DEFLEXIÓN OBJETIVO: {target:.2f} m (actual: {current_defl:.2f} m)\n"
+            analysis_text += "-" * 40 + "\n"
+            
+            self.suggested_values['defl_e'] = e_needed
+            analysis_text += f"• e (Amortiguamiento Coriolis): {e_needed:.3f}\n"
+            analysis_text += f"  Nota: ↑e = ↓deflexión, ↓e = ↑deflexión\n\n"
+            
+            e_temp = e_needed
+        else:
+            e_temp = self.formula_coeffs['deflection']['e']
+        
+        if not analysis_text:
+            analysis_text = "Ingrese un valor objetivo en los campos superiores.\n"
+        
+        analysis_text += "\n" + "=" * 45 + "\n"
+        analysis_text += "Presione 'APLICAR VALORES SUGERIDOS' para usarlos.\n"
+        
+        self.temp_k1 = k1_temp
+        self.temp_a = a_temp
+        self.temp_b = b_temp
+        self.temp_k2 = k2_temp
+        self.temp_c = c_temp
+        self.temp_d = d_temp
+        self.temp_e = e_temp
+        
+        self.analysis_result.config(state="normal")
+        self.analysis_result.delete(1.0, tk.END)
+        self.analysis_result.insert(1.0, analysis_text)
+        self.analysis_result.config(state="disabled")
+
+
+    def apply_suggested_values(self):
+        """Aplica los valores sugeridos a los campos de entrada"""
+        if not self.suggested_values:
+            messagebox.showwarning("Sin sugerencias", "Primero ejecute 'CALCULAR CÓMO LLEGAR'")
+            return
+        
+        for key, value in self.suggested_values.items():
+            if key == 'range_k':
+                self.coeff_range_k.delete(0, tk.END)
+                self.coeff_range_k.insert(0, f"{value:.8f}")
+            elif key == 'range_a':
+                self.coeff_range_a.delete(0, tk.END)
+                self.coeff_range_a.insert(0, f"{value:.3f}")
+            elif key == 'range_b':
+                self.coeff_range_b.delete(0, tk.END)
+                self.coeff_range_b.insert(0, f"{value:.3f}")
+            elif key == 'time_k':
+                self.coeff_time_k.delete(0, tk.END)
+                self.coeff_time_k.insert(0, f"{value:.6f}")
+            elif key == 'time_c':
+                self.coeff_time_c.delete(0, tk.END)
+                self.coeff_time_c.insert(0, f"{value:.3f}")
+            elif key == 'time_d':
+                self.coeff_time_d.delete(0, tk.END)
+                self.coeff_time_d.insert(0, f"{value:.3f}")
+            elif key == 'defl_e':
+                self.coeff_defl_e.delete(0, tk.END)
+                self.coeff_defl_e.insert(0, f"{value:.3f}")
+        
+        self.update_formula_preview()
+        messagebox.showinfo("Éxito", "Valores sugeridos aplicados a los campos.\nPresione 'APLICAR FÓRMULAS' para ver los resultados.")
+    
+
+    def update_formula_preview(self):
+        """Actualiza las previsualizaciones de fórmulas"""
+        if not self.trajectory_data:
+            return
+        
+        try:
+            v0 = self.current_projectile['muzzle_velocity']
+            elev = self.elevation.get()
+            lat = self.latitude.get()
+            data = self.trajectory_data
+            y = data["y"]
+            t = data["t"]
+            
+            current_range = np.sqrt(y[0, -1]**2 + y[1, -1]**2)
+            current_time = t[-1]
+            current_defl = y[1, -1]
+            current_alt = np.max(-y[2, :])
+            
+            k1 = float(self.coeff_range_k.get() or self.formula_coeffs['range']['k'])
+            a = float(self.coeff_range_a.get() or self.formula_coeffs['range']['a'])
+            b = float(self.coeff_range_b.get() or self.formula_coeffs['range']['b'])
+            
+            k2 = float(self.coeff_time_k.get() or self.formula_coeffs['time']['k'])
+            c = float(self.coeff_time_c.get() or self.formula_coeffs['time']['c'])
+            d = float(self.coeff_time_d.get() or self.formula_coeffs['time']['d'])
+            
+            e = float(self.coeff_defl_e.get() or self.formula_coeffs['deflection']['e'])
+            
+            k3 = float(self.coeff_alt_k.get() or self.formula_coeffs['altitude']['k'])
+            f = float(self.coeff_alt_f.get() or self.formula_coeffs['altitude']['f'])
+            g = float(self.coeff_alt_g.get() or self.formula_coeffs['altitude']['g'])
+            
+            range_new = k1 * (v0 ** a) * (np.sin(2 * np.radians(elev)) ** b)
+            time_new = k2 * (v0 ** c) * (np.sin(np.radians(elev)) ** d)
+            omega = 7.2921159e-5
+            v_avg = range_new / time_new if time_new > 0 else 0
+            defl_new = 2 * omega * np.sin(np.radians(lat)) * v_avg * (time_new ** 2) / e
+            alt_new = k3 * (v0 ** f) * (np.sin(np.radians(elev)) ** (2 * g))
+            
+            self.range_k_effect.config(text=f"(cambio: {range_new - current_range:+.1f} m)")
+            self.range_a_effect.config(text=f"(sensibilidad: ~{(range_new/current_range - 1)*100:+.1f}%)")
+            self.range_b_effect.config(text=f"(eficiencia angular)")
+            self.range_preview.config(text=f"→ Alcance estimado: {range_new:.1f} m")
+            
+            self.time_k_effect.config(text=f"(cambio: {time_new - current_time:+.2f} s)")
+            self.time_c_effect.config(text=f"(sensibilidad: ~{(time_new/current_time - 1)*100:+.1f}%)")
+            self.time_d_effect.config(text=f"(eficiencia angular)")
+            self.time_preview.config(text=f"→ Tiempo estimado: {time_new:.2f} s")
+            
+            self.defl_e_effect.config(text=f"(cambio: {defl_new - current_defl:+.2f} m)")
+            self.defl_preview.config(text=f"→ Deflexión estimada: {defl_new:.2f} m")
+            
+            self.alt_k_effect.config(text=f"(cambio: {alt_new - current_alt:+.1f} m)")
+            self.alt_f_effect.config(text=f"(sensibilidad: ~{(alt_new/current_alt - 1)*100:+.1f}%)")
+            self.alt_g_effect.config(text=f"(eficiencia angular)")
+            self.alt_preview.config(text=f"→ Altitud estimada: {alt_new:.1f} m")
+            
+        except Exception:
+            pass
+    
+
+    def apply_formulas(self):
+        """Aplica los coeficientes de fórmulas y actualiza resultados"""
+        try:
+            self.formula_coeffs['range']['k'] = float(self.coeff_range_k.get())
+            self.formula_coeffs['range']['a'] = float(self.coeff_range_a.get())
+            self.formula_coeffs['range']['b'] = float(self.coeff_range_b.get())
+            self.formula_coeffs['time']['k'] = float(self.coeff_time_k.get())
+            self.formula_coeffs['time']['c'] = float(self.coeff_time_c.get())
+            self.formula_coeffs['time']['d'] = float(self.coeff_time_d.get())
+            self.formula_coeffs['deflection']['e'] = float(self.coeff_defl_e.get())
+            self.formula_coeffs['altitude']['k'] = float(self.coeff_alt_k.get())
+            self.formula_coeffs['altitude']['f'] = float(self.coeff_alt_f.get())
+            self.formula_coeffs['altitude']['g'] = float(self.coeff_alt_g.get())
+            
+            self.update_formula_preview()
+            
+            if hasattr(self, 'temp_k1'):
+                v0 = self.current_projectile['muzzle_velocity']
+                elev = self.elevation.get()
+                lat = self.latitude.get()
+                
+                range_new = self.temp_k1 * (v0 ** self.temp_a) * (np.sin(2 * np.radians(elev)) ** self.temp_b)
+                time_new = self.temp_k2 * (v0 ** self.temp_c) * (np.sin(np.radians(elev)) ** self.temp_d)
+                omega = 7.2921159e-5
+                v_avg = range_new / time_new if time_new > 0 else 0
+                defl_new = 2 * omega * np.sin(np.radians(lat)) * v_avg * (time_new ** 2) / self.temp_e
+                
+                results_text = "Valores estimados con coeficientes sugeridos:\n"
+                results_text += "=" * 45 + "\n"
+                results_text += f"Alcance estimado:  {range_new:.1f} m\n"
+                results_text += f"Tiempo estimado:   {time_new:.2f} s\n"
+                results_text += f"Deflexión estimada: {defl_new:.2f} m\n"
+                results_text += "=" * 45 + "\n"
+                
+                self.target_results.config(state="normal")
+                self.target_results.delete(1.0, tk.END)
+                self.target_results.insert(1.0, results_text)
+                self.target_results.config(state="disabled")
+            
+            messagebox.showinfo("Éxito", "Coeficientes de fórmulas actualizados")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al aplicar fórmulas: {str(e)}")
+    
+
+    def restore_default_formulas(self):
+        """Restaura los coeficientes a sus valores por defecto"""
+        self.formula_coeffs = {
+            'range': {'k': 0.0000185, 'a': 1.80, 'b': 0.70},
+            'time': {'k': 0.074, 'c': 0.90, 'd': 0.60},
+            'deflection': {'e': 1.84},
+            'altitude': {'k': 0.000012, 'f': 1.70, 'g': 0.55}
+        }
+        
+        self.coeff_range_k.delete(0, tk.END)
+        self.coeff_range_k.insert(0, "0.0000185")
+        self.coeff_range_a.delete(0, tk.END)
+        self.coeff_range_a.insert(0, "1.80")
+        self.coeff_range_b.delete(0, tk.END)
+        self.coeff_range_b.insert(0, "0.70")
+        self.coeff_time_k.delete(0, tk.END)
+        self.coeff_time_k.insert(0, "0.074")
+        self.coeff_time_c.delete(0, tk.END)
+        self.coeff_time_c.insert(0, "0.90")
+        self.coeff_time_d.delete(0, tk.END)
+        self.coeff_time_d.insert(0, "0.60")
+        self.coeff_defl_e.delete(0, tk.END)
+        self.coeff_defl_e.insert(0, "1.84")
+        self.coeff_alt_k.delete(0, tk.END)
+        self.coeff_alt_k.insert(0, "0.000012")
+        self.coeff_alt_f.delete(0, tk.END)
+        self.coeff_alt_f.insert(0, "1.70")
+        self.coeff_alt_g.delete(0, tk.END)
+        self.coeff_alt_g.insert(0, "0.55")
+        
+        self.update_formula_preview()
+        messagebox.showinfo("Éxito", "Valores por defecto restaurados")
+    
+
+    # ============================================================================
+    # MÉTODOS DE CARGA DE PROYECTILES Y DATOS
+    # ============================================================================
+    def load_projectile_list(self):
+        """Carga la lista de proyectiles disponibles"""
+        projectiles = []
+        if os.path.exists("data/projectiles"):
+            for file in os.listdir("data/projectiles"):
+                if file.endswith(".json"):
+                    projectiles.append(f"data/projectiles/{file}")
+        self.projectile_combo["values"] = projectiles
+        if projectiles:
+            self.projectile_combo.current(0)
+            self.load_projectile_info(projectiles[0])
+    
+
+    def load_custom_file(self):
+        """Carga un archivo personalizado (JSON o CSV)"""
+        filename = filedialog.askopenfilename(
+            title="Seleccionar archivo",
+            filetypes=[("JSON/CSV files", "*.json;*.csv"), ("JSON files", "*.json"), ("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if filename:
+            if filename.endswith('.json'):
+                self.projectile_file.set(filename)
+                self.load_projectile_info(filename)
+            elif filename.endswith('.csv'):
+                self.load_reference_data(filename)
+    
+
+    def load_reference_data(self, filename):
+        """Carga datos de referencia desde CSV"""
+        try:
+            import pandas as pd
+            df = pd.read_csv(filename)
+            self.reference_data = df
+            messagebox.showinfo("Éxito", f"Datos de referencia cargados: {len(df)} filas\nColumnas: {list(df.columns)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo cargar el CSV: {str(e)}")
+   
+
+    def on_projectile_selected(self, event):
+        """Maneja la selección de proyectil del combobox"""
+        self.load_projectile_info(self.projectile_file.get())
+        self.reset_3d_state()  # ← AGREGAR ESTA LÍNEA
+    
+
+    def on_charge_selected(self, event):
+        """Maneja la selección de carga"""
+        if self.current_projectile and 'charges' in self.current_projectile:
+            charge = self.charge_combo.get()
+            if charge in self.current_projectile['charges']:
+                self.current_projectile['muzzle_velocity'] = self.current_projectile['charges'][charge]['muzzle_velocity']
+                self.current_projectile['selected_charge'] = charge
+                
+                info = f"Nombre: {self.current_projectile.get('name', 'N/A')}\n"
+                info += f"Calibre: {self.current_projectile.get('caliber', 'N/A')} {self.current_projectile.get('caliber_unit', 'mm')}\n"
+                info += f"Masa: {self.current_projectile.get('mass', 'N/A')} kg\n"
+                info += f"Carga: {charge}\n"
+                info += f"Arrastre: {self.current_projectile.get('drag_function', 'N/A')}\n"
+                info += f"Coef. Balístico: {self.current_projectile.get('ballistic_coefficient', 'N/A')}\n"
+                info += f"Vel. inicial: {self.current_projectile['muzzle_velocity']} m/s"
+                
+                self.projectile_info.config(state="normal")
+                self.projectile_info.delete(1.0, tk.END)
+                self.projectile_info.insert(1.0, info)
+                self.projectile_info.config(state="disabled")
+
+                self.reset_3d_state()  # ← AGREGAR ESTA LÍNEA
+    
+
+    def on_drag_changed(self, event):
+        """Actualiza la información mostrada cuando se cambia el modelo de arrastre manualmente"""
+        if self.current_projectile:
+            selected = self.drag_function.get()
+            recommended = self._get_recommended_drag(self.current_projectile.get('name', ''))
+            if selected != recommended:
+                messagebox.showwarning("Advertencia",
+                    f"El modelo seleccionado '{selected}' no es el recomendado '{recommended}'.\n"
+                    "Los resultados pueden ser menos precisos.")
+            
+            self.current_projectile['drag_function'] = selected
+            
+            info = f"Nombre: {self.current_projectile.get('name', 'N/A')}\n"
+            info += f"Calibre: {self.current_projectile.get('caliber', 'N/A')} {self.current_projectile.get('caliber_unit', 'mm')}\n"
+            info += f"Masa: {self.current_projectile.get('mass', 'N/A')} kg\n"
+            if 'charges' in self.current_projectile:
+                info += f"Carga: {self.charge_combo.get()}\n"
+            else:
+                info += f"Carga: {self.current_projectile.get('charge_type', 'N/A')}\n"
+            info += f"Arrastre: {selected}\n"
+            info += f"Coef. Balístico: {self.current_projectile.get('ballistic_coefficient', 'N/A')}\n"
+            info += f"Vel. inicial: {self.current_projectile.get('muzzle_velocity', 'N/A')} m/s"
+            
+            self.projectile_info.config(state="normal")
+            self.projectile_info.delete(1.0, tk.END)
+            self.projectile_info.insert(1.0, info)
+            self.projectile_info.config(state="disabled")
+
+            self.reset_3d_state()
+
+    def on_fuze_changed(self, event=None):
+        """Muestra/oculta el campo de tiempo según el tipo de espoleta."""
+        if self.fuze_type.get() == "TIA":
+            self.tia_frame.grid()
+        else:
+            self.tia_frame.grid_remove()
+
+    def load_projectile_info(self, filename):
+        """Carga la información de un proyectil desde JSON"""
+        try:
+            with open(filename, "r", encoding='utf-8') as f:
+                proj = json.load(f)
+            self.current_projectile = proj
+            # --- Recomendación automática de modelo de arrastre ---
+            recommended = self._get_recommended_drag(proj.get('name', ''))
+            self.drag_function.set(recommended)
+            
+            if 'charges' in proj:
+                charges = list(proj['charges'].keys())
+                self.charge_combo['values'] = charges
+                selected = proj.get('selected_charge', charges[0])
+                self.charge_combo.set(selected)
+                proj['muzzle_velocity'] = proj['charges'][selected]['muzzle_velocity']
+
+            # Sincronizar el modelo de arrastre con el Combobox
+            if 'drag_function' in proj:
+                self.drag_function.set(proj['drag_function'])
+
+            info = f"Nombre: {proj.get('name', 'N/A')}\n"
+            info += f"Calibre: {proj.get('caliber', 'N/A')} {proj.get('caliber_unit', 'mm')}\n"
+            info += f"Masa: {proj.get('mass', 'N/A')} kg\n"
+            if 'charges' in proj:
+                info += f"Carga: {self.charge_combo.get()}\n"
+            else:
+                info += f"Carga: {proj.get('charge_type', 'N/A')}\n"
+            info += f"Arrastre: {proj.get('drag_function', 'N/A')}\n"
+            info += f"Coef. Balístico: {proj.get('ballistic_coefficient', 'N/A')}\n"
+            info += f"Vel. inicial: {proj.get('muzzle_velocity', 'N/A')} m/s"
+            
+            self.projectile_info.config(state="normal")
+            self.projectile_info.delete(1.0, tk.END)
+            self.projectile_info.insert(1.0, info)
+            self.projectile_info.config(state="disabled")
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo cargar el proyectil: {str(e)}")
+    
+
+    # ============================================================================
+    # MÉTODOS DE SIMULACIÓN
+    # ============================================================================
+    def simulate_initial(self):
+        """Ejecuta la simulación inicial y guarda resultados estáticos"""
+        self.simulate()
+        if self.trajectory_data:
+            data = self.trajectory_data
+            y = data["y"]
+            t = data["t"]
+            final = y[:, -1]
+            max_alt = np.max(-y[2, :])
+            range_val = np.sqrt(final[0]**2 + final[1]**2)
+            deflection = final[1]
+            impact_vel = np.sqrt(final[3]**2 + final[4]**2 + final[5]**2)
+            
+            # Determinar la velocidad del sonido a la altura final
+            final_alt = -final[2]
+            if final_alt < 0:
+                final_alt = 0
+            mach_val = impact_vel / self.atmosphere.get_properties(final_alt)['speed_of_sound']
+            
+            self.initial_results = {
+                'range': range_val,
+                'deflection': deflection,
+                'time': t[-1],
+                'max_alt': max_alt,
+                'impact_vel': impact_vel,
+                'mach': mach_val,
+                'final_alt': final_alt
+            }
+            self.update_results_panel()  # ← NUEVO MÉTODO
+            self.update_formula_preview()
+    
+
+
+    def simulate(self):
+        """Prepara y ejecuta la simulación"""
+        try:
+            if not self.current_projectile:
+                messagebox.showerror("Error", "No hay proyectil cargado")
+                return
+            
+            # Aplicar offset de temperatura
+            self.atmosphere.set_temperature_offset(self.temp_offset.get())
+            self.atmosphere.set_humidity(self.humidity.get())
+            self.atmosphere.set_co2(self.co2_ppm.get())
+            
+            self._run_simulation(
+                self.current_projectile["caliber"],
+                self.current_projectile["caliber_unit"],
+                self.current_projectile["drag_function"],
+                self.current_projectile["ballistic_coefficient"],
+                self.current_projectile["mass"],
+                self.current_projectile["muzzle_velocity"],
+                self.elevation.get(),
+                self.azimuth.get()
+            )          
+        
+        except Exception as e:
+            messagebox.showerror("Error en simulación", str(e))
+    
+
+    def _run_simulation(self, caliber, caliber_unit, drag_func, bc, mass, v0, elev, az):
+        """Ejecuta la simulación numérica con todos los modelos físicos"""
+        from src.geophysics.coriolis import Coriolis
+        from src.atmosphere.wind import WindModel
+        from src.aerodynamics.magnus import MagnusEffect
+        
+        geom = ProjectileGeometry(caliber, caliber_unit)
+        selected_drag = self.drag_function.get()  # Usar el valor del Combobox
+        drag = DragCoefficient(selected_drag, bc)
+        coriolis = Coriolis(self.latitude.get())
+        wind = WindModel(self.wind_speed.get(), self.wind_direction.get())
+        
+        magnus = None
+        if self.use_magnus.get():
+            spin_rate = self.spin_rate_rpm.get()
+            # Protección contra RPM extremadamente bajas que causan inestabilidad
+            if spin_rate < 1000:
+                spin_rate = 15000  # Valor razonable para artillería
+                self.spin_rate_rpm.set(spin_rate)  # Actualizar la GUI
+            
+            magnus = MagnusEffect(
+                spin_rate_rpm=spin_rate,
+                caliber_m=caliber / 1000.0,
+                rifling_twist_cal=self.rifling_twist.get()
+            )
+            if spin_rate == 0:
+                magnus.calculate_spin_rate(v0)
+        
+        forces = Forces(drag, geom, mass, coriolis_model=coriolis, 
+                       latitude=self.latitude.get(), wind_model=wind,
+                       magnus_model=magnus)
+       
+        def derivatives(t, y):
+            vel = y[3:6]
+            f = forces.calculate(t, y)
+            acc = f / mass
+            return np.concatenate([vel, acc])
+        
+        is_base_ejection = False  # ← INICIALIZACIÓN
+        # Definir evento de detonación según tipo de espoleta
+        if self.fuze_type.get() == "PDA":
+            # Espoleta PDA: detonación en impacto con el suelo (z = 0)
+            def fuze_event(t, y):
+                return -y[2]
+            fuze_event.terminal = True
+            fuze_event.direction = -1
+            self.tia_expulsion_point = None  # No hay punto de expulsión
+            
+        else:  # TIA
+            t_prog = self.fuze_time.get()
+            if t_prog <= 0:
+                messagebox.showerror("Error", "El ajuste de tiempo TIA debe ser mayor a 0 segundos.")
+                self.trajectory_data = None
+                return
+            
+            # Determinar si es proyectil de carga base (ILLUM, SMOKE, RAAM)
+            proj_name = self.current_projectile.get('name', '').upper()
+            is_base_ejection = any(x in proj_name for x in ['ILLUM', 'SMOKE', 'RAAM', 'M314', 'M485', 'HC'])
+            
+            if is_base_ejection:
+                # Proyectil de carga base: TIA marca expulsión, pero el cuerpo continúa
+                def tia_expulsion_event(t, y):
+                    return t - t_prog
+                tia_expulsion_event.terminal = False  # NO detiene la simulación
+                tia_expulsion_event.direction = 0
+                
+                # Guardar punto de expulsión para marcarlo en gráficos
+                self.tia_expulsion_point = None
+                
+                # El evento terminal sigue siendo el impacto
+                def fuze_event(t, y):
+                    return -y[2]
+                fuze_event.terminal = True
+                fuze_event.direction = -1
+                
+                # Usar ambos eventos
+                events = [tia_expulsion_event, fuze_event]
+            else:
+                # Proyectil HE: TIA causa detonación en aire (terminal)
+                def fuze_event(t, y):
+                    return t - t_prog
+                fuze_event.terminal = True
+                fuze_event.direction = 0
+                events = fuze_event
+                self.tia_expulsion_point = None
+        
+        transform = RotationTransform(az, elev)
+        v0_vec = transform.muzzle_to_ned(v0)
+        y0 = np.array([0.0, 0.0, 0.0, v0_vec[0], v0_vec[1], v0_vec[2]])
+        
+        try:
+            if is_base_ejection and self.fuze_type.get() == "TIA":
+                result = solve_ivp(
+                    derivatives, (0, 300), y0,
+                    method="DOP853", events=events,
+                    rtol=1e-10, atol=1e-12, max_step=0.5
+                )
+                # Encontrar punto de expulsión
+                if len(result.t_events) > 0 and len(result.t_events[0]) > 0:
+                    t_exp = result.t_events[0][0]
+                    # Interpolar posición en t_exp
+                    from scipy.interpolate import interp1d
+                    x_interp = interp1d(result.t, result.y[0])(t_exp)
+                    y_interp = interp1d(result.t, result.y[1])(t_exp)
+                    z_interp = interp1d(result.t, result.y[2])(t_exp)
+                    self.tia_expulsion_point = (x_interp, y_interp, z_interp)
+            else:
+                result = solve_ivp(
+                    derivatives, (0, 300), y0,
+                    method="DOP853", events=fuze_event,
+                    rtol=1e-10, atol=1e-12, max_step=0.5
+                )
+        except Exception as e:
+            messagebox.showerror("Error en la integración", 
+                                 f"La simulación numérica falló:\n{str(e)}\n\n"
+                                 "Posibles causas:\n"
+                                 "- Magnus con RPM muy bajo/altas\n"
+                                 "- Viento extremo\n"
+                                 "- Combinación de parámetros inestable")
+            self.trajectory_data = None
+            return
+        
+        if not result.success:
+            messagebox.showwarning("Simulación incompleta", 
+                                   f"La integración no convergió correctamente.\n{result.message}")
+        
+        self.trajectory_data = {"t": result.t, "y": result.y}
+        self.update_plots()
+        self.update_table()
+    
+
+    # ============================================================================
+    # MÉTODOS DE ACTUALIZACIÓN DE GRÁFICOS Y TABLAS
+    # ============================================================================
+    def update_plots(self):
+        """Actualiza los gráficos de trayectoria y velocidad"""
+        data = self.trajectory_data
+        y = data["y"]
+        
+        x = np.sqrt(y[0, :]**2 + y[1, :]**2)
+        z = -y[2, :]
+        t = data["t"]
+        v = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+        
+        self.ax1.clear()
+        self.ax2.clear()
+        
+        # Trayectoria
+        self.ax1.plot(x, z, "b-", linewidth=2, label='Trayectoria')
+        self.ax1.set_xlabel("Alcance (m)")
+        self.ax1.set_ylabel("Altitud (m)")
+        self.ax1.set_title("Trayectoria - Haz clic y arrastra el punto amarillo")
+        self.ax1.grid(True, alpha=0.3)
+        
+        # Velocidad vs Tiempo
+        self.ax2.plot(t, v, "r-", linewidth=2)
+        self.ax2.set_xlabel("Tiempo (s)")
+        self.ax2.set_ylabel("Velocidad (m/s)")
+        self.ax2.set_title("Velocidad vs Tiempo")
+        self.ax2.grid(True, alpha=0.3)
+        
+        # Marcar punto final según espoleta
+        if self.fuze_type.get() == "PDA":
+            self.ax1.plot(x[-1], z[-1], 'ro', markersize=8, label='Impacto (PDA)')
+        else:  # TIA
+            proj_name = self.current_projectile.get('name', '').upper()
+            is_base_ejection = any(x in proj_name for x in ['ILLUM', 'SMOKE', 'RAAM', 'M314', 'M485', 'HC'])
+            
+            if is_base_ejection:
+                # Marcar punto de expulsión (si existe)
+                if hasattr(self, 'tia_expulsion_point') and self.tia_expulsion_point:
+                    x_exp, y_exp, z_exp = self.tia_expulsion_point
+                    r_exp = np.sqrt(x_exp**2 + y_exp**2)
+                    self.ax1.plot(r_exp, -z_exp, 'y*', markersize=12, 
+                                  label=f'Expulsión TIA ({self.fuze_time.get():.1f}s)')
+                # Marcar impacto final
+                self.ax1.plot(x[-1], z[-1], 'ro', markersize=8, label='Impacto final')
+            else:
+                # HE con TIA: detonación en aire
+                self.ax1.plot(x[-1], z[-1], 'y*', markersize=12, 
+                              label=f'Detonación TIA ({t[-1]:.1f}s)')
+        
+        self.ax1.legend()
+        
+        # Punto arrastrable
+        self.draggable_circle = self.ax1.plot(x[len(x)//2], z[len(z)//2], 'yo', markersize=10)[0]
+        self.cursor_annotation = None
+        
+        self.fig.tight_layout()
+        self.canvas.draw()
+    
+
+    def on_press(self, event):
+        """Maneja el evento de presionar el mouse"""
+        if event.inaxes == self.ax1 and self.trajectory_data is not None:
+            self.drag_active = True
+            self.update_circle_position(event)
+    
+
+    def on_release(self, event):
+        """Maneja el evento de soltar el mouse"""
+        self.drag_active = False
+    
+
+    def on_motion(self, event):
+        """Maneja el evento de mover el mouse"""
+        if hasattr(self, 'drag_active') and self.drag_active:
+            if event.inaxes == self.ax1 and event.xdata is not None:
+                self.update_circle_position(event)
+    
+
+    def update_circle_position(self, event):
+        """Actualiza la posición del círculo arrastrable"""
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        x = np.sqrt(y[0, :]**2 + y[1, :]**2)
+        z = -y[2, :]
+        v = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+        
+        idx = np.argmin(np.abs(x - event.xdata))
+        
+        self.draggable_circle.set_data([x[idx]], [z[idx]])
+        
+        if self.cursor_annotation is not None:
+            self.cursor_annotation.remove()
+            self.cursor_annotation = None
+        
+        mach_val = v[idx] / self.atmosphere.get_properties(z[idx])['speed_of_sound']
+        
+        x_max = np.max(x)
+        z_max = np.max(z)
+        
+        if x[idx] < x_max * 0.5:
+            x_offset = 40
+        else:
+            x_offset = -120
+            
+        if z[idx] < z_max * 0.5:
+            y_offset = 40
+        else:
+            y_offset = -60
+        
+        self.cursor_annotation = self.ax1.annotate(
+            f'Tiempo: {t[idx]:.2f} s\nAlcance: {x[idx]:.1f} m\nAltitud: {z[idx]:.1f} m\nVelocidad: {v[idx]:.1f} m/s\nMach: {mach_val:.3f}',
+            xy=(x[idx], z[idx]),
+            xytext=(x_offset, y_offset),
+            textcoords='offset points',
+            bbox=dict(boxstyle='round,pad=0.5', fc='yellow', alpha=0.9),
+            arrowprops=dict(arrowstyle='->')
+        )
+        self.canvas.draw_idle()
+    
+
+    def update_table(self):
+        """Actualiza la tabla de trayectoria"""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        
+        range_vals = np.sqrt(y[0, :]**2 + y[1, :]**2)
+        impact_range = range_vals[-1]
+        deflection = y[1, :]
+        alt = -y[2, :]
+        speed = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+        
+        step = max(1, len(t) // 30)
+        for i in range(0, len(t), step):
+            mach = speed[i] / self.atmosphere.get_properties(alt[i])['speed_of_sound']
+            self.tree.insert('', tk.END, values=(
+                f"{t[i]:.2f}",
+                f"{range_vals[i]:.1f}",
+                f"{impact_range:.1f}",
+                f"{deflection[i]:.2f}",
+                f"{alt[i]:.1f}",
+                f"{speed[i]:.1f}",
+                f"{mach:.3f}"
+            ))
+        
+        mach_impact = speed[-1] / self.atmosphere.get_properties(alt[-1])['speed_of_sound']
+        self.tree.insert('', tk.END, values=(
+            f"{t[-1]:.2f}",
+            f"{range_vals[-1]:.1f}",
+            f"{impact_range:.1f}",
+            f"{deflection[-1]:.2f}",
+            f"{alt[-1]:.1f}",
+            f"{speed[-1]:.1f}",
+            f"{mach_impact:.3f}"
+        ), tags=('impact',))
+        self.tree.tag_configure('impact', background='#ffcccc')
+    
+
+    def update_phases(self):
+        """Actualiza el panel de fases de vuelo"""
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        
+        range_vals = np.sqrt(y[0, :]**2 + y[1, :]**2)
+        alt = -y[2, :]
+        speed = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+        max_alt_idx = np.argmax(alt)
+        
+        phases_text = "=" * 70 + "\n"
+        phases_text += "                    TABLA DE FASES DE VUELO\n"
+        phases_text += "=" * 70 + "\n\n"
+        phases_text += f"PROYECTIL: {self.current_projectile['name']}\n"
+        phases_text += f"ESPOLETA: {self.fuze_type.get()}\n"
+        if self.fuze_type.get() == "TIA":
+            phases_text += f"TIEMPO TIA: {self.fuze_time.get():.2f} s\n"
+        if 'charges' in self.current_projectile:
+            phases_text += f"CARGA: {self.charge_combo.get()}\n"
+        else:
+            phases_text += f"CARGA: {self.current_projectile.get('charge_type', 'N/A')}\n"
+        phases_text += f"ELEVACIÓN: {self.elevation.get():.1f}°\n"
+        phases_text += f"MODELO: {self.current_projectile['drag_function']}\n"
+        phases_text += "-" * 70 + "\n\n"
+        phases_text += "FASE 1: DISPARO\n"
+        phases_text += f"  Velocidad inicial: {speed[0]:.1f} m/s\n"
+        phases_text += f"  Mach inicial: {speed[0] / self.atmosphere.get_properties(0)['speed_of_sound']:.3f}\n\n"
+        phases_text += "FASE 2: APOGEO\n"
+        phases_text += f"  Tiempo: {t[max_alt_idx]:.2f} s\n"
+        phases_text += f"  Altitud máxima: {alt[max_alt_idx]:.1f} m\n"
+        phases_text += f"  Alcance: {range_vals[max_alt_idx]:.1f} m\n\n"
+        
+        if self.fuze_type.get() == "PDA":
+            phases_text += "FASE 3: IMPACTO\n"
+        else:
+            phases_text += "FASE 3: DETONACIÓN TIA\n"
+            if alt[-1] > 0.1:
+                phases_text += f"  Altura de explosión: {alt[-1]:.1f} m\n"
+        
+        phases_text += f"  Tiempo total: {t[-1]:.2f} s\n"
+        phases_text += f"  Alcance total: {range_vals[-1]:.1f} m\n"
+        phases_text += f"  Deflexión: {y[1, -1]:.2f} m\n"
+        phases_text += f"  Velocidad final: {speed[-1]:.1f} m/s\n"
+        phases_text += "=" * 70 + "\n"
+        
+        self.phases_text.config(state="normal")
+        self.phases_text.delete(1.0, tk.END)
+        self.phases_text.insert(1.0, phases_text)
+        self.phases_text.config(state="disabled")
+
+
+    # ============================================================================
+    # MÉTODOS DE AUDITORÍA Y AGENTES
+    # ============================================================================
+    def audit_query(self):
+        """Procesa consultas de auditoría usando agentes inteligentes"""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Ejecuta una simulación primero")
+            return
+        
+        query = self.audit_entry.get().lower()
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        
+        range_vals = np.sqrt(y[0, :]**2 + y[1, :]**2)
+        alt = -y[2, :]
+        speed = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+        v0 = speed[0]
+        elev = self.elevation.get()
+        az = self.azimuth.get()
+        mass = self.current_projectile["mass"]
+        bc = self.current_projectile["ballistic_coefficient"]
+        drag_func = self.current_projectile["drag_function"]
+        final_deflection = y[1, -1]
+        
+        agent = self._determine_agent(query)
+        
+        response = "=" * 80 + "\n"
+        response += f"  CONSULTA: {self.audit_entry.get()}\n"
+        response += "=" * 80 + "\n\n"
+        
+        if agent['id'] == 'validation':
+            response += self._agent_validation(query, v0, elev, az, mass, bc, drag_func)
+        elif agent['id'] == 'convergence':
+            response += self._agent_convergence(query, t, len(t), None)
+        elif agent['id'] == 'empirical':
+            response += self._agent_empirical(query, range_vals[-1], t[-1], final_deflection, drag_func, bc)
+        else:
+            response += self._agent_report(query, range_vals[-1], t[-1], np.max(alt), speed[-1], final_deflection)
+        
+        self.audit_text.config(state="normal")
+        self.audit_text.delete(1.0, tk.END)
+        self.audit_text.insert(1.0, response)
+        self.audit_text.config(state="disabled")
+    
+
+    def _determine_agent(self, query):
+        """Determina qué agente debe responder según palabras clave"""
+        agents = [
+            {
+                'id': 'empirical',
+                'keywords': ['deflexión', 'deflexion', 'deriva', 'coriolis', 'por qué', 'por que',
+                            'comparar', 'real', 'empírico', 'empirico', 'tabla', 'nato', 'militar',
+                            'diferencia', 'esperado', 'teórico', 'teorico', 'g1', 'g7', 'arrastre']
+            },
+            {
+                'id': 'validation',
+                'keywords': ['parámetro', 'parametro', 'masa', 'velocidad inicial', 'ángulo', 'angulo', 
+                            'elevación', 'elevacion', 'balístico', 'balistico', 'carga', 'calibre',
+                            'modificar', 'cambiar', 'aumentar', 'reducir', 'valor', 'rango', 'válido']
+            },
+            {
+                'id': 'convergence',
+                'keywords': ['precisión', 'precision', 'error', 'tolerancia', 'numérico', 'numerico',
+                            'cálculo', 'calculo', 'calcula', 'integración', 'integracion', 'dop853',
+                            'paso', 'convergencia', 'método', 'metodo']
+            },
+            {
+                'id': 'report',
+                'keywords': ['reporte', 'informe', 'exportar', 'resumen', 'todos', 'general']
+            }
+        ]
+        
+        query_lower = query.lower()
+        for agent in agents:
+            for keyword in agent['keywords']:
+                if keyword in query_lower:
+                    return agent
+        
+        return agents[0]
+    
+
+    def _agent_validation(self, query, v0, elev, az, mass, bc, drag_func):
+        """Agente de Validación de Parámetros"""
+        resp = "ANÁLISIS DE PARÁMETROS\n"
+        resp += "-" * 80 + "\n\n"
+        
+        resp += "VERIFICACIÓN DE CONSISTENCIA:\n"
+        resp += f"  • Velocidad inicial: {v0:.1f} m/s ✓\n"
+        resp += f"  • Masa: {mass:.2f} kg ✓\n"
+        resp += f"  • Coef. Balístico: {bc:.3f} ({drag_func}) ✓\n"
+        resp += f"  • Elevación: {elev:.1f}° ✓\n\n"
+        
+        resp += "RANGOS DE VALIDEZ:\n"
+        if 100 < v0 < 2000:
+            resp += f"  • Velocidad: Dentro de rango balístico [100-2000] m/s\n"
+        else:
+            resp += f"  • Velocidad: ⚠️ Fuera de rango típico\n"
+        
+        if drag_func == 'G1':
+            bc_range = (0.1, 1.0)
+        else:
+            bc_range = (0.3, 1.5)
+        
+        if bc_range[0] < bc < bc_range[1]:
+            resp += f"  • BC {bc:.3f}: Dentro de rango para {drag_func} {bc_range}\n"
+        else:
+            resp += f"  • BC {bc:.3f}: ⚠️ Fuera de rango típico para {drag_func}\n"
+        
+        resp += "\nPARA MODIFICAR RESULTADOS:\n"
+        resp += f"  • Para MAYOR alcance: Aumente velocidad inicial (actual: {v0:.0f} m/s) o use G7\n"
+        resp += f"  • Para MAYOR tiempo de vuelo: Aumente elevación (actual: {elev:.1f}°)\n"
+        resp += f"  • Para MENOR deflexión: Reduzca latitud o tiempo de vuelo\n"
+        
+        return resp
+    
+
+    def _agent_convergence(self, query, t, n_points, result):
+        """Agente de Convergencia Numérica"""
+        resp = "ANÁLISIS DEL CÁLCULO NUMÉRICO\n"
+        resp += "-" * 80 + "\n\n"
+        
+        resp += "MÉTODO DE CÁLCULO:\n"
+        resp += "  • Integrador: DOP853 (Runge-Kutta orden 8)\n"
+        resp += "  • Paso adaptativo con control de error\n"
+        resp += f"  • Puntos calculados: {n_points}\n"
+        resp += f"  • Tiempo total: {t[-1]:.6f} s\n\n"
+        
+        resp += "PRECISIÓN DEL CÁLCULO:\n"
+        resp += "  • Tolerancia relativa: 1e-10 (0.00000001%)\n"
+        resp += "  • Tolerancia absoluta: 1e-12\n"
+        resp += f"  • Error global estimado: < {1e-8 * t[-1]:.2e} s\n\n"
+        
+        resp += "¿CÓMO SE CALCULA?\n"
+        resp += "  El integrador resuelve las ecuaciones de movimiento:\n"
+        resp += "  dv/dt = gravedad + arrastre + coriolis\n"
+        resp += "  dx/dt = v\n"
+        resp += "  Cada paso se ajusta dinámicamente para mantener el error bajo control.\n"
+        
+        return resp
+    
+
+    def _agent_empirical(self, query, range_val, time_val, deflection, drag_func, bc):
+        """Agente de Correspondencia Empírica"""
+        resp = "EXPLICACIÓN DETALLADA DEL CÁLCULO\n"
+        resp += "=" * 80 + "\n\n"
+        
+        if self.reference_data is not None:
+            resp += "COMPARACIÓN CON DATOS DE REFERENCIA:\n"
+            resp += "-" * 80 + "\n"
+            
+            time_col = None
+            for col in ['TOF', 'tof', 'tiempo', 'time', 'Tiempo', 'Time']:
+                if col in self.reference_data.columns:
+                    time_col = col
+                    break
+            
+            range_col = None
+            for col in ['DIST', 'dist', 'alcance', 'range', 'Alcance', 'Range']:
+                if col in self.reference_data.columns:
+                    range_col = col
+                    break
+            
+            drift_col = None
+            for col in ['DRIFT', 'drift', 'deflexion', 'deflection', 'deriva']:
+                if col in self.reference_data.columns:
+                    drift_col = col
+                    break
+            
+            if range_col:
+                ref_ranges = self.reference_data[range_col].values
+                closest_idx = np.argmin(np.abs(ref_ranges - range_val))
+                ref_range = ref_ranges[closest_idx]
+                
+                resp += f"\nCOMPARACIÓN PARA ALCANCE ~{ref_range:.0f} m:\n"
+                resp += f"  (Simulado: {range_val:.0f} m)\n"
+                resp += "-" * 40 + "\n"
+                
+                if time_col:
+                    ref_time = self.reference_data[time_col].iloc[closest_idx]
+                    diff = time_val - ref_time
+                    pct = 100 * diff / ref_time if ref_time != 0 else 0
+                    resp += f"\nTIEMPO DE VUELO:\n"
+                    resp += f"  • Simulado: {time_val:.2f} s\n"
+                    resp += f"  • Referencia (TOF): {ref_time:.2f} s\n"
+                    resp += f"  • Diferencia: {diff:+.2f} s ({pct:+.1f}%)\n"
+                    
+                    if abs(pct) > 2:
+                        resp += f"\n  PARA LLEGAR A {ref_time:.2f} s DEBES:\n"
+                        if diff > 0:
+                            resp += f"    - Reducir velocidad inicial en ~{abs(pct)*2:.0f} m/s\n"
+                            resp += f"    - O reducir elevación en ~{abs(pct):.1f} mils\n"
+                        else:
+                            resp += f"    - Aumentar velocidad inicial en ~{abs(pct)*2:.0f} m/s\n"
+                            resp += f"    - O aumentar elevación en ~{abs(pct):.1f} mils\n"
+                
+                if drift_col:
+                    ref_drift = self.reference_data[drift_col].iloc[closest_idx]
+                    drift_meters = ref_drift * (ref_range / 1000)
+                    diff_drift = deflection - drift_meters
+                    pct_drift = 100 * diff_drift / drift_meters if drift_meters != 0 else 0
+                    
+                    resp += f"\nDEFLEXIÓN:\n"
+                    resp += f"  • Simulada: {deflection:.2f} m\n"
+                    resp += f"  • Referencia (DRIFT): {ref_drift:.2f} mils (~{drift_meters:.2f} m)\n"
+                    resp += f"  • Diferencia: {diff_drift:+.2f} m\n"
+                    
+                    if abs(diff_drift) > 1:
+                        resp += f"\n  POSIBLES CAUSAS:\n"
+                        resp += f"    • Efecto Coriolis no coincide con tabla\n"
+                        resp += f"    • Ajuste de latitud o azimuth necesario\n"
+            
+            return resp
+        
+        v0 = self.current_projectile['muzzle_velocity']
+        elev = self.elevation.get()
+        mass = self.current_projectile['mass']
+        lat = self.latitude.get()
+        
+        if "deflexión" in query or "deflexion" in query:
+            resp += "CÁLCULO DE LA DEFLEXIÓN (EFECTO CORIOLIS):\n"
+            resp += "-" * 80 + "\n\n"
+            resp += "OPERACIONES REALIZADAS:\n"
+            resp += "  1. Velocidad angular terrestre: ω = 7.2921159×10⁻⁵ rad/s\n"
+            resp += f"  2. Latitud: φ = {lat:.1f}°\n"
+            resp += f"  3. Componentes de Coriolis:\n"
+            resp += f"     • ω_N = ω × cos(φ) = {7.2921159e-5 * np.cos(np.radians(lat)):.6f} rad/s\n"
+            resp += f"     • ω_D = -ω × sin(φ) = {-7.2921159e-5 * np.sin(np.radians(lat)):.6f} rad/s\n"
+            resp += f"  4. Aceleración lateral: a_y = -2 × (ω_D × v_x - ω_N × v_z)\n"
+            resp += f"  5. Integración numérica sobre {time_val:.2f} s\n\n"
+            resp += "VALORES UTILIZADOS:\n"
+            resp += f"  • Tiempo total: {time_val:.2f} s\n"
+            resp += f"  • Velocidad promedio: {range_val/time_val:.1f} m/s\n"
+            resp += f"  • Deflexión calculada: {deflection:.2f} m\n"
+            resp += f"  • Tasa de deriva: {deflection/time_val:.2f} m/s\n\n"
+            resp += "CÓMO MODIFICAR LA DEFLEXIÓN:\n"
+            resp += f"  • Para REDUCIR a X metros: Multiplica X/{deflection:.2f} por el tiempo de vuelo\n"
+            resp += f"  • Para CERO deflexión: Apunte {deflection/time_val*1000:.1f} mils a la IZQUIERDA\n"
+            
+        elif "alcance" in query:
+            resp += "CÁLCULO DEL ALCANCE:\n"
+            resp += "-" * 80 + "\n\n"
+            resp += "OPERACIONES REALIZADAS:\n"
+            resp += "  1. Ecuaciones de movimiento: dv/dt = -D(v,ρ,BC) - g + Coriolis, dx/dt = v\n"
+            resp += f"  2. Integración DOP853 con {len(self.trajectory_data['t'])} pasos\n"
+            resp += f"  3. Alcance = √(X_final² + Y_final²)\n\n"
+            resp += "VALORES UTILIZADOS:\n"
+            resp += f"  • Velocidad inicial: {v0:.1f} m/s\n"
+            resp += f"  • Elevación: {elev:.1f}°\n"
+            resp += f"  • Componente horizontal: {v0 * np.cos(np.radians(elev)):.1f} m/s\n"
+            resp += f"  • Modelo de arrastre: {drag_func} (BC={bc:.3f})\n"
+            resp += f"  • Densidad del aire (nivel mar): 1.225 kg/m³\n\n"
+            resp += "CÓMO LLEGAR A UN ALCANCE OBJETIVO (R):\n"
+            resp += f"  • Actual: {range_val:.2f} m\n"
+            resp += f"  • Factor de ajuste: R/{range_val:.2f} = {1:.3f}\n"
+            resp += f"  • Nueva velocidad ≈ {v0:.0f} × √(factor)\n"
+            resp += f"  • O nuevo ángulo: usar tabla de tiro\n"
+            
+        elif "tiempo" in query:
+            resp += "CÁLCULO DEL TIEMPO DE VUELO:\n"
+            resp += "-" * 80 + "\n\n"
+            resp += "OPERACIONES REALIZADAS:\n"
+            resp += "  1. Integración temporal de ecuaciones de movimiento\n"
+            resp += f"  2. Detección de impacto cuando Z ≤ 0\n"
+            resp += f"  3. Tiempo total = Σ(Δt_i) sobre {len(self.trajectory_data['t'])} pasos\n\n"
+            resp += "VALORES UTILIZADOS:\n"
+            resp += f"  • Altitud máxima: {np.max(-self.trajectory_data['y'][2, :]):.1f} m\n"
+            resp += f"  • Tiempo al apogeo: ~{time_val/2:.1f} s\n"
+            resp += f"  • Velocidad vertical inicial: {v0 * np.sin(np.radians(elev)):.1f} m/s\n"
+            resp += f"  • Paso promedio: {time_val/len(self.trajectory_data['t']):.3f} s\n\n"
+            resp += "CÓMO LLEGAR A UN TIEMPO OBJETIVO (T):\n"
+            resp += f"  • Actual: {time_val:.2f} s\n"
+            resp += f"  • Para T > {time_val:.2f}: Aumente elevación\n"
+            resp += f"  • Para T < {time_val:.2f}: Aumente velocidad o reduzca elevación\n"
+            
+        else:
+            resp += "RESUMEN DE LA SIMULACIÓN:\n"
+            resp += "-" * 80 + "\n\n"
+            resp += f"Proyectil: {self.current_projectile['name']}\n"
+            resp += f"Carga: {self.charge_combo.get() if 'charges' in self.current_projectile else 'N/A'}\n\n"
+            resp += "VALORES PRINCIPALES:\n"
+            resp += f"  • Alcance: {range_val:.2f} m\n"
+            resp += f"  • Tiempo: {time_val:.2f} s\n"
+            resp += f"  • Deflexión: {deflection:.2f} m\n"
+            resp += f"  • Velocidad impacto: {np.sqrt(self.trajectory_data['y'][3, -1]**2 + self.trajectory_data['y'][4, -1]**2 + self.trajectory_data['y'][5, -1]**2):.1f} m/s\n\n"
+            resp += "PARA MODIFICAR CUALQUIER VALOR:\n"
+            resp += "  • Use el panel 'Parámetros Modificables' a la izquierda\n"
+            resp += "  • O pregunte específicamente: '¿cómo llegar a X metros?'\n"
+        
+        return resp
+    
+
+    def _agent_report(self, query, range_val, time_val, max_alt, impact_vel, deflection):
+        """Agente de Generación de Reportes"""
+        resp = "RESUMEN DE SIMULACIÓN\n"
+        resp += "-" * 80 + "\n\n"
+        
+        resp += f"PROYECTIL: {self.current_projectile['name']}\n"
+        if 'charges' in self.current_projectile:
+            resp += f"CARGA: {self.charge_combo.get()}\n\n"
+        else:
+            resp += f"CARGA: {self.current_projectile.get('charge_type', 'N/A')}\n\n"
+        
+        resp += "RESULTADOS PRINCIPALES:\n"
+        resp += f"  • Alcance: {range_val:.2f} m\n"
+        resp += f"  • Deflexión: {deflection:.2f} m\n"
+        resp += f"  • Tiempo de vuelo: {time_val:.2f} s\n"
+        resp += f"  • Altitud máxima: {max_alt:.2f} m\n"
+        resp += f"  • Velocidad de impacto: {impact_vel:.2f} m/s\n\n"
+        
+        resp += "CONDICIONES:\n"
+        resp += f"  • Elevación: {self.elevation.get():.1f}°\n"
+        resp += f"  • Latitud: {self.latitude.get():.1f}°\n"
+        resp += f"  • Coriolis: ACTIVO\n"
+        resp += f"  • Modelo: {self.current_projectile['drag_function']}\n\n"
+        
+        resp += "Use 'Exportar CSV' para guardar los datos completos.\n"
+        
+        return resp
+       
+
+    def audit_apply_and_simulate(self):
+        """Aplica parámetros editados y ejecuta simulación"""
+        try:
+            v0 = float(self.audit_v0.get()) if self.audit_v0.get() else self.current_projectile["muzzle_velocity"]
+            elev = float(self.audit_elev.get()) if self.audit_elev.get() else self.elevation.get()
+            mass = float(self.audit_mass.get()) if self.audit_mass.get() else self.current_projectile["mass"]
+            bc = float(self.audit_bc.get()) if self.audit_bc.get() else self.current_projectile["ballistic_coefficient"]
+            lat = float(self.audit_lat.get()) if self.audit_lat.get() else self.latitude.get()
+            
+            self.elevation.set(elev)
+            self.latitude.set(lat)
+            self.current_projectile["muzzle_velocity"] = v0
+            self.current_projectile["mass"] = mass
+            self.current_projectile["ballistic_coefficient"] = bc
+            
+            self.simulate()
+            
+            data = self.trajectory_data
+            y = data["y"]
+            t = data["t"]
+            range_val = np.sqrt(y[0, -1]**2 + y[1, -1]**2)
+            
+            result_text = "SIMULACIÓN CON PARÁMETROS APLICADOS:\n"
+            result_text += "=" * 45 + "\n"
+            result_text += f"Velocidad: {v0:.1f} m/s\n"
+            result_text += f"Elevación: {elev:.1f}°\n"
+            result_text += f"Masa: {mass:.2f} kg\n"
+            result_text += f"BC: {bc:.3f}\n"
+            result_text += f"Latitud: {lat:.1f}°\n"
+            result_text += "-" * 45 + "\n"
+            result_text += f"Alcance: {range_val:.2f} m\n"
+            result_text += f"Tiempo: {t[-1]:.2f} s\n"
+            result_text += f"Deflexión: {y[1, -1]:.2f} m\n"
+            
+            self.audit_results_applied.config(state="normal")
+            self.audit_results_applied.delete(1.0, tk.END)
+            self.audit_results_applied.insert(1.0, result_text)
+            self.audit_results_applied.config(state="disabled")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al aplicar: {str(e)}")
+    
+
+    def audit_calculate_how_to_reach(self):
+        """Calcula cómo llegar a valores objetivo"""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Ejecuta una simulación primero")
+            return
+        
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        current_range = np.sqrt(y[0, -1]**2 + y[1, -1]**2)
+        current_time = t[-1]
+        current_defl = y[1, -1]
+        
+        v0 = self.current_projectile["muzzle_velocity"]
+        elev = self.elevation.get()
+        lat = self.latitude.get()
+        
+        result_text = "CÁLCULOS PRECISOS PARA LLEGAR AL OBJETIVO\n"
+        result_text += "=" * 50 + "\n\n"
+        result_text += "FÓRMULAS UTILIZADAS (ARES/USSA 1976/WGS84):\n"
+        result_text += "-" * 50 + "\n"
+        
+        if self.target_range.get():
+            target = float(self.target_range.get())
+            factor = target / current_range
+            
+            result_text += f"\nALCANCE OBJETIVO: {target:.0f} m\n"
+            result_text += f"  Actual: {current_range:.2f} m\n"
+            result_text += f"  Factor: {factor:.4f}\n\n"
+            
+            v0_new = v0 * (factor ** (1/1.8))
+            result_text += f"  Nueva velocidad ≈ {v0_new:.0f} m/s\n"
+            
+            sin_2theta = np.sin(2 * np.radians(elev))
+            sin_2theta_new = sin_2theta * (factor ** (1/0.7))
+            sin_2theta_new = np.clip(sin_2theta_new, -1, 1)
+            elev_new = np.degrees(np.arcsin(sin_2theta_new)) / 2
+            result_text += f"  O nueva elevación ≈ {elev_new:.1f}°\n"
+            
+            coriolis_effect = 2 * 7.292e-5 * v0 * np.sin(np.radians(lat)) * current_time
+            result_text += f"  Efecto Coriolis en alcance: {coriolis_effect:.1f} m\n"
+        
+        if self.target_time.get():
+            target = float(self.target_time.get())
+            factor = target / current_time
+            
+            result_text += f"\nTIEMPO OBJETIVO: {target:.2f} s\n"
+            result_text += f"  Actual: {current_time:.2f} s\n"
+            result_text += f"  Factor: {factor:.4f}\n\n"
+            
+            elev_new = np.degrees(np.arcsin(np.sin(np.radians(elev)) * (factor ** (1/0.6))))
+            elev_new = np.clip(elev_new, 0, 90)
+            result_text += f"  Nueva elevación ≈ {elev_new:.1f}°\n"
+            
+            v0_new = v0 * (factor ** (1/0.9))
+            result_text += f"  O nueva velocidad ≈ {v0_new:.0f} m/s\n"
+        
+        if self.target_deflection.get():
+            target = float(self.target_deflection.get())
+            diff = target - current_defl
+            
+            result_text += f"\nDEFLEXIÓN OBJETIVO: {target:.2f} m\n"
+            result_text += f"  Actual: {current_defl:.2f} m\n"
+            result_text += f"  Diferencia: {diff:+.2f} m\n\n"
+            
+            omega = 7.2921159e-5
+            sin_lat = np.sin(np.radians(lat))
+            v_avg = current_range / current_time
+            coriolis_per_second = 2 * omega * sin_lat * v_avg
+            result_text += f"  Tasa de deriva Coriolis: {coriolis_per_second:.4f} m/s\n"
+            
+            if abs(diff) > 0.01:
+                correction_rad = np.arcsin(diff / (current_defl + 1e-10))
+                correction_mils = np.degrees(correction_rad) * 17.777
+                result_text += f"  Corrección azimuth: {correction_mils:+.1f} mils\n"
+                v0_adjustment = diff / (coriolis_per_second * current_time)
+                result_text += f"  O ajuste de velocidad: {v0_adjustment:+.1f} m/s\n"
+        
+        result_text += "\n" + "=" * 50 + "\n"
+        result_text += "NOTA: Use el panel superior para aplicar los cambios.\n"
+        
+        self.audit_what_to_change.config(state="normal")
+        self.audit_what_to_change.delete(1.0, tk.END)
+        self.audit_what_to_change.insert(1.0, result_text)
+        self.audit_what_to_change.config(state="disabled")    
+    
+
+    # ============================================================================
+    # MÉTODO DE EXPORTACIÓN CSV
+    # ============================================================================
+    def export_csv(self):
+        """Exporta los datos de trayectoria a CSV"""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Ejecuta una simulación primero")
+            return
+        
+        filename = filedialog.asksaveasfilename(defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
+        
+        if filename:
+            data = self.trajectory_data
+            y = data["y"]
+            import pandas as pd
+            
+            range_vals = np.sqrt(y[0, :]**2 + y[1, :]**2)
+            alt = -y[2, :]
+            speed = np.sqrt(y[3, :]**2 + y[4, :]**2 + y[5, :]**2)
+            mach = [speed[i] / self.atmosphere.get_properties(alt[i])['speed_of_sound'] for i in range(len(data["t"]))]
+            
+            df = pd.DataFrame({
+                "time": data["t"], "range": range_vals, "deflection": y[1, :],
+                "x": y[0, :], "y": y[1, :], "z": y[2, :],
+                "vx": y[3, :], "vy": y[4, :], "vz": y[5, :],
+                "altitude": alt, "speed": speed, "mach": mach
+            })
+            df.to_csv(filename, index=False)
+            messagebox.showinfo("Éxito", f"Datos exportados a {filename}")
+
+
+    # ============================================================================
+    # MÉTODOS DEL GENERADOR DE TABLAS DE TIRO
+    # ============================================================================
+    def setup_table_generator_ui(self):
+        """Configura la interfaz del generador de tablas"""
+        main_frame = ttk.Frame(self.table_gen_frame, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        ttk.Label(main_frame, text="GENERADOR DE TABLAS DE TIRO", font=("Arial", 16, "bold")).pack(pady=10)
+        
+        config_frame = ttk.LabelFrame(main_frame, text="Configuración de la Tabla", padding=15)
+        config_frame.pack(fill="x", padx=20, pady=10)
+        
+        row = 0
+        ttk.Label(config_frame, text="Alcance inicial (m):", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=5)
+        self.table_start_range = ttk.Entry(config_frame, width=15)
+        self.table_start_range.insert(0, "1000")
+        self.table_start_range.grid(row=row, column=1, padx=10, pady=5)
+        
+        ttk.Label(config_frame, text="Alcance final (m):", font=("Arial", 11)).grid(row=row, column=2, sticky="w", pady=5)
+        self.table_end_range = ttk.Entry(config_frame, width=15)
+        self.table_end_range.insert(0, "12000")
+        self.table_end_range.grid(row=row, column=3, padx=10, pady=5)
+        
+        row += 1
+        ttk.Label(config_frame, text="Paso (m):", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=5)
+        self.table_step = ttk.Entry(config_frame, width=15)
+        self.table_step.insert(0, "1000")
+        self.table_step.grid(row=row, column=1, padx=10, pady=5)
+        
+        ttk.Label(config_frame, text="Azimuth (°):", font=("Arial", 11)).grid(row=row, column=2, sticky="w", pady=5)
+        self.table_azimuth = ttk.Entry(config_frame, width=15)
+        self.table_azimuth.insert(0, "0.0")
+        self.table_azimuth.grid(row=row, column=3, padx=10, pady=5)
+        
+        row += 1
+        ttk.Label(config_frame, text="Modo de búsqueda:", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=5)
+        self.search_mode = ttk.Combobox(config_frame, values=['Ambos', 'Tiro tenso (preferido)', 'Tiro curvo'], width=20, state='readonly')
+        self.search_mode.current(0)
+        self.search_mode.grid(row=row, column=1, columnspan=3, padx=10, pady=5, sticky="w")
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(pady=15)
+        
+        ttk.Button(btn_frame, text="GENERAR TABLA", command=self.generate_firing_table, width=20).pack(side="left", padx=10)
+        ttk.Button(btn_frame, text="EXPORTAR CSV", command=self.export_firing_table_csv, width=20).pack(side="left", padx=10)
+        ttk.Button(btn_frame, text="EXPORTAR FORMATO NATO", command=self.export_firing_table_nato, width=20).pack(side="left", padx=10)
+        
+        self.table_progress = ttk.Progressbar(main_frame, mode='determinate')
+        self.table_progress.pack(fill="x", padx=20, pady=10)
+        
+        result_frame = ttk.LabelFrame(main_frame, text="Tabla Generada", padding=10)
+        result_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        columns = ('DIST', 'QE', 'TOF', 'DRIFT_MILS', 'DEFLEX_MILS', 'MAX_ALT', 'IMPACT_VEL')
+        self.table_tree = ttk.Treeview(result_frame, columns=columns, show='headings', height=12)
+        
+        self.table_tree.heading('DIST', text='Alcance (m)')
+        self.table_tree.heading('QE', text='QE (mils)')
+        self.table_tree.heading('TOF', text='TOF (s)')
+        self.table_tree.heading('DRIFT_MILS', text='DRIFT (mils)')
+        self.table_tree.heading('DEFLEX_MILS', text='Deflexión (mils)')
+        self.table_tree.heading('MAX_ALT', text='Alt. Máx (m)')
+        self.table_tree.heading('IMPACT_VEL', text='Vel. Impacto (m/s)')
+        
+        for col in columns:
+            self.table_tree.column(col, width=90, anchor='center')
+        
+        scrollbar = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=self.table_tree.yview)
+        self.table_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.table_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.table_status = ttk.Label(main_frame, text="Listo para generar tabla.", font=("Arial", 10))
+        self.table_status.pack(pady=5)
+        
+        self.generated_table = None
+
+
+    def setup_planner_ui(self):
+        """Configura la interfaz del planificador de misión."""
+        main_frame = ttk.Frame(self.planner_frame, padding="20")
+        main_frame.pack(fill="both", expand=True)
+        
+        ttk.Label(main_frame, text="PLANIFICADOR DE MISIÓN - SOLUCIÓN DE TIRO", 
+                  font=("Arial", 16, "bold")).pack(pady=10)
+        
+        # Frame de entrada
+        input_frame = ttk.LabelFrame(main_frame, text="Datos del Objetivo", padding=15)
+        input_frame.pack(fill="x", padx=20, pady=10)
+        
+        row = 0
+        ttk.Label(input_frame, text="Distancia al objetivo (m):", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=5)
+        self.target_distance = ttk.Entry(input_frame, width=15, font=("Arial", 11))
+        self.target_distance.insert(0, "8500")
+        self.target_distance.grid(row=row, column=1, padx=10, pady=5)
+        
+        ttk.Label(input_frame, text="Azimuth (°):", font=("Arial", 11)).grid(row=row, column=2, sticky="w", pady=5)
+        self.target_azimuth = ttk.Entry(input_frame, width=15, font=("Arial", 11))
+        self.target_azimuth.insert(0, "0.0")
+        self.target_azimuth.grid(row=row, column=3, padx=10, pady=5)
+        
+        row += 1
+        ttk.Label(input_frame, text="Altitud del objetivo (m):", font=("Arial", 11)).grid(row=row, column=0, sticky="w", pady=5)
+        self.target_altitude = ttk.Entry(input_frame, width=15, font=("Arial", 11))
+        self.target_altitude.insert(0, "0")
+        self.target_altitude.grid(row=row, column=1, padx=10, pady=5)
+        
+        # Frame de restricciones
+        restrict_frame = ttk.LabelFrame(main_frame, text="Restricciones (Opcional)", padding=15)
+        restrict_frame.pack(fill="x", padx=20, pady=10)
+        
+        ttk.Checkbutton(restrict_frame, text="Incluir proyectiles 105mm", 
+                       variable=self.include_105mm).grid(row=0, column=0, sticky="w", padx=10)
+        ttk.Checkbutton(restrict_frame, text="Incluir proyectiles 155mm", 
+                       variable=self.include_155mm).grid(row=0, column=1, sticky="w", padx=10)
+        ttk.Checkbutton(restrict_frame, text="Solo tiro tenso (<45°)", 
+                       variable=self.tiro_tenso_only).grid(row=1, column=0, sticky="w", padx=10)
+        ttk.Checkbutton(restrict_frame, text="Solo tiro curvo (>45°)", 
+                       variable=self.tiro_curvo_only).grid(row=1, column=1, sticky="w", padx=10)
+        
+        ttk.Label(restrict_frame, text="Tiempo máximo de vuelo (s):", 
+                 font=("Arial", 11)).grid(row=2, column=0, sticky="w", pady=5)
+        self.max_tof = ttk.Entry(restrict_frame, width=15)
+        self.max_tof.insert(0, "120")
+        self.max_tof.grid(row=2, column=1, sticky="w", pady=5)
+        
+        # Botón de búsqueda
+        ttk.Button(main_frame, text="BUSCAR SOLUCIONES", 
+                  command=self.search_firing_solutions, width=25).pack(pady=15)
+        
+        # Frame de resultados
+        result_frame = ttk.LabelFrame(main_frame, text="Soluciones Encontradas", padding=10)
+        result_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        
+        columns = ('proj', 'charge', 'drag', 'qe', 'tof', 'max_alt')
+        self.solutions_tree = ttk.Treeview(result_frame, columns=columns, show='headings', height=8)
+        
+        self.solutions_tree.heading('proj', text='Proyectil')
+        self.solutions_tree.heading('charge', text='Carga')
+        self.solutions_tree.heading('drag', text='Arrastre')
+        self.solutions_tree.heading('qe', text='QE (mils)')
+        self.solutions_tree.heading('tof', text='TOF (s)')
+        self.solutions_tree.heading('max_alt', text='Alt. Máx (m)')
+        
+        for col in columns:
+            self.solutions_tree.column(col, width=100, anchor='center')
+        
+        scrollbar = ttk.Scrollbar(result_frame, orient=tk.VERTICAL, command=self.solutions_tree.yview)
+        self.solutions_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.solutions_tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Frame de recomendación
+        self.recommendation_frame = ttk.LabelFrame(main_frame, text="Solución Recomendada", padding=10)
+        self.recommendation_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.recommendation_label = ttk.Label(self.recommendation_frame, 
+                                              text="Haga clic en BUSCAR SOLUCIONES", 
+                                              font=("Arial", 11))
+        self.recommendation_label.pack()
+        
+        # Botones de acción
+        action_frame = ttk.Frame(main_frame)
+        action_frame.pack(pady=10)
+        ttk.Button(action_frame, text="APLICAR SOLUCIÓN SELECCIONADA", 
+                  command=self.apply_selected_solution, width=25).pack(side="left", padx=10)
+        ttk.Button(action_frame, text="EXPORTAR REPORTE", 
+                  command=self.export_planner_report, width=20).pack(side="left", padx=10)
+
+    def setup_3d_simulator_ui(self):
+        """Configura la interfaz del simulador 3D de corrección de tiro."""
+        # Paned window para dividir controles y visualización
+        main_paned = ttk.PanedWindow(self.sim3d_frame, orient=tk.HORIZONTAL)
+        main_paned.pack(fill="both", expand=True)
+        
+        # ========================================================================
+        # PANEL IZQUIERDO: CONTROLES
+        # ========================================================================
+        left_frame = ttk.Frame(main_paned, padding="15", width=380)
+        main_paned.add(left_frame, weight=1)
+        
+        # Título principal
+        title_frame = ttk.Frame(left_frame)
+        title_frame.pack(fill="x", pady=(0, 15))
+        ttk.Label(title_frame, text="🎯 SIMULADOR 3D DE CORRECCIÓN", 
+                  font=("Arial", 14, "bold")).pack()
+        ttk.Separator(title_frame, orient="horizontal").pack(fill="x", pady=5)
+        
+        # Frame de datos del disparo actual
+        info_frame = ttk.LabelFrame(left_frame, text="📊 Disparo Actual", padding=15)
+        info_frame.pack(fill="x", pady=10)
+        
+        self.sim3d_proj_label = ttk.Label(info_frame, text="Proyectil: ---", 
+                                          font=("Arial", 11))
+        self.sim3d_proj_label.pack(anchor="w", pady=3, fill="x")
+        
+        self.sim3d_charge_label = ttk.Label(info_frame, text="Carga: ---", 
+                                            font=("Arial", 11))
+        self.sim3d_charge_label.pack(anchor="w", pady=3, fill="x")
+        
+        self.sim3d_range_label = ttk.Label(info_frame, text="Alcance: --- m", 
+                                           font=("Arial", 11))
+        self.sim3d_range_label.pack(anchor="w", pady=3, fill="x")
+        
+        self.sim3d_deflection_label = ttk.Label(info_frame, text="Deflexión original: --- m", 
+                                                font=("Arial", 11))
+        self.sim3d_deflection_label.pack(anchor="w", pady=3, fill="x")
+        
+        # Frame de correcciones
+        corr_frame = ttk.LabelFrame(left_frame, text="🔧 Correcciones", padding=15)
+        corr_frame.pack(fill="x", pady=10)
+        
+        # Elevación
+        ttk.Label(corr_frame, text="📐 Elevación (mils):", 
+                  font=("Arial", 11, "bold")).pack(anchor="w")
+        
+        elev_slider_frame = ttk.Frame(corr_frame)
+        elev_slider_frame.pack(fill="x", pady=5)
+        
+        self.sim3d_elev_slider = ttk.Scale(
+            elev_slider_frame, from_=-100, to=100, orient=tk.HORIZONTAL,
+            variable=self.correction_elevation, command=self.on_3d_correction_changed,
+            length=250
+        )
+        self.sim3d_elev_slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        self.sim3d_elev_entry = ttk.Entry(elev_slider_frame, textvariable=self.correction_elevation, 
+                                          width=8, font=("Arial", 11))
+        self.sim3d_elev_entry.pack(side="right", padx=5)
+        self.sim3d_elev_entry.bind("<Return>", self.on_3d_correction_changed)
+        self.sim3d_elev_entry.bind("<FocusOut>", self.on_3d_correction_changed)
+        
+        ttk.Label(corr_frame, text="↕️ Positivo = más alto | Negativo = más bajo", 
+                  font=("Arial", 8, "italic"), foreground="gray").pack(anchor="w", pady=(0, 10))
+        
+        # Deflexión (Azimuth)
+        ttk.Label(corr_frame, text="🧭 Deflexión (mils):", 
+                  font=("Arial", 11, "bold")).pack(anchor="w", pady=(10, 0))
+        
+        defl_slider_frame = ttk.Frame(corr_frame)
+        defl_slider_frame.pack(fill="x", pady=5)
+        
+        self.sim3d_defl_slider = ttk.Scale(
+            defl_slider_frame, from_=-100, to=100, orient=tk.HORIZONTAL,
+            variable=self.correction_azimuth, command=self.on_3d_correction_changed,
+            length=250
+        )
+        self.sim3d_defl_slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        self.sim3d_defl_entry = ttk.Entry(defl_slider_frame, textvariable=self.correction_azimuth, 
+                                          width=8, font=("Arial", 11))
+        self.sim3d_defl_entry.pack(side="right", padx=5)
+        self.sim3d_defl_entry.bind("<Return>", self.on_3d_correction_changed)
+        self.sim3d_defl_entry.bind("<FocusOut>", self.on_3d_correction_changed)
+        
+        ttk.Label(corr_frame, text="↔️ Positivo = derecha | Negativo = izquierda", 
+                  font=("Arial", 8, "italic"), foreground="gray").pack(anchor="w")
+        
+        # Frame de error con colores según precisión
+        error_frame = ttk.LabelFrame(left_frame, text="🎯 Error Respecto al Objetivo", padding=15)
+        error_frame.pack(fill="x", pady=10)
+        
+        self.sim3d_error_label = ttk.Label(error_frame, text="Sin disparo", 
+                                           font=("Arial", 12, "bold"))
+        self.sim3d_error_label.pack(pady=5)
+        
+        self.sim3d_error_details = tk.Text(error_frame, height=4, font=("Arial", 10), 
+                                           bg="#f5f5f5", state="disabled", relief="flat")
+        self.sim3d_error_details.pack(fill="x", pady=5)
+        
+        # Barra de progreso visual del error
+        self.error_progress = ttk.Progressbar(error_frame, mode='determinate', length=300)
+        self.error_progress.pack(fill="x", pady=5)
+        
+        # Botones de acción - EXPANDIDOS
+        btn_frame = ttk.Frame(left_frame)
+        btn_frame.pack(fill="x", pady=15)
+        
+        ttk.Button(btn_frame, text="📂 CARGAR DISPARO ACTUAL", 
+                  command=self.load_3d_shot, width=30).pack(fill="x", pady=3)
+        ttk.Button(btn_frame, text="🔄 RESETEAR CORRECCIONES", 
+                  command=self.reset_3d_corrections, width=30).pack(fill="x", pady=3)
+        ttk.Button(btn_frame, text="✅ APLICAR CORRECCIÓN AL PANEL", 
+                  command=self.apply_3d_correction, width=30).pack(fill="x", pady=3)
+        ttk.Button(btn_frame, text="💾 EXPORTAR VISTA 3D", 
+                  command=self.export_3d_view, width=30).pack(fill="x", pady=3)
+        
+        # Instrucciones rápidas
+        help_frame = ttk.LabelFrame(left_frame, text="💡 Cómo usar", padding=10)
+        help_frame.pack(fill="x", pady=10)
+        
+        help_text = "1. Ejecute EVALUAR en el panel principal\n"
+        help_text += "2. Haga clic en CARGAR DISPARO ACTUAL\n"
+        help_text += "3. Use los sliders para corregir el tiro\n"
+        help_text += "4. Aplique la corrección y vuelva a evaluar"
+        ttk.Label(help_frame, text=help_text, font=("Arial", 9), 
+                  justify="left").pack(anchor="w")
+        
+        # ========================================================================
+        # PANEL DERECHO: VISUALIZACIÓN 3D
+        # ========================================================================
+        right_frame = ttk.Frame(main_paned, padding="10")
+        main_paned.add(right_frame, weight=3)
+        
+        # Crear figura 3D
+        self.fig3d = plt.figure(figsize=(10, 8), facecolor='white')
+        self.ax3d = self.fig3d.add_subplot(111, projection='3d')
+        self.ax3d.set_facecolor('#f8f9fa')
+        
+        self.canvas3d = FigureCanvasTkAgg(self.fig3d, master=right_frame)
+        self.canvas3d.get_tk_widget().pack(fill="both", expand=True)
+        
+        # Toolbar para navegación
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        toolbar = NavigationToolbar2Tk(self.canvas3d, right_frame)
+        toolbar.update()
+        self.canvas3d.get_tk_widget().pack(fill="both", expand=True)
+        
+        # Leyenda de estado
+        status_frame = ttk.Frame(right_frame)
+        status_frame.pack(fill="x", pady=5)
+        self.sim3d_status = ttk.Label(status_frame, 
+                                      text="🎯 Listo. Cargue un disparo para comenzar.", 
+                                      font=("Arial", 10, "italic"), foreground="blue")
+        self.sim3d_status.pack()
+        
+        # Vincular eventos de rueda del mouse para zoom más interactivo
+        self.canvas3d.mpl_connect('scroll_event', self.on_3d_scroll)
+
+    def on_3d_scroll(self, event):
+        """Zoom con rueda del mouse."""
+        if event.inaxes == self.ax3d:
+            scale = 1.1 if event.button == 'up' else 0.9
+            self.ax3d.set_xlim([x * scale for x in self.ax3d.get_xlim()])
+            self.ax3d.set_ylim([y * scale for y in self.ax3d.get_ylim()])
+            self.canvas3d.draw()
+
+    def reset_3d_state(self):
+        """Resetea el estado del simulador 3D cuando cambia el disparo."""
+        # NO borrar self.trajectory_data - eso lo maneja simulate()
+        self.original_impact = None
+        self.correction_elevation.set(0.0)
+        self.correction_azimuth.set(0.0)
+        
+        # RESETEAR TAMBIÉN LOS PARÁMETROS DE TIRO A VALORES POR DEFECTO
+        self.elevation.set(45.0)   # ← AGREGAR: Resetear elevación a 45°
+        self.azimuth.set(0.0)       # ← AGREGAR: Resetear azimuth a 0°
+        
+        # Limpiar labels del Simulador 3D
+        if hasattr(self, 'sim3d_proj_label'):
+            self.sim3d_proj_label.config(text="Proyectil: ---")
+            self.sim3d_charge_label.config(text="Carga: ---")
+            self.sim3d_range_label.config(text="Alcance: --- m")
+            if hasattr(self, 'sim3d_deflection_label'):
+                self.sim3d_deflection_label.config(text="Deflexión original: --- m")
+            self.sim3d_error_label.config(text="Sin disparo", foreground="red")
+            
+            self.sim3d_error_details.config(state="normal")
+            self.sim3d_error_details.delete(1.0, tk.END)
+            self.sim3d_error_details.insert(1.0, "Cargue un nuevo disparo")
+            self.sim3d_error_details.config(state="disabled")
+            
+            if hasattr(self, 'error_progress'):
+                self.error_progress['value'] = 0
+            
+            self.sim3d_status.config(text="🔄 Disparo cambiado. Cargue el nuevo disparo.")
+        
+        # Limpiar gráfico 3D
+        if hasattr(self, 'ax3d'):
+            self.ax3d.clear()
+            self.ax3d.set_xlabel('Alcance X (m)')
+            self.ax3d.set_ylabel('Deflexión Y (m)')
+            self.ax3d.set_zlabel('Altitud Z (m)')
+            self.ax3d.set_title('🎯 Simulador 3D de Corrección de Tiro')
+            self.ax3d.grid(True, alpha=0.2)
+            self.canvas3d.draw()
+
+    def load_3d_shot(self):
+        """Carga el disparo actual desde self.trajectory_data."""
+        if self.trajectory_data is None or self.current_projectile is None:
+            messagebox.showwarning("Sin datos", "Ejecute una simulación primero (EVALUAR o aplicar solución del Planificador).")
+            return
+        
+        data = self.trajectory_data
+        y = data["y"]
+        
+        self.original_impact = {
+            'x': y[0, -1],
+            'y': y[1, -1],
+            'z': y[2, -1]
+        }
+        
+        self.sim3d_proj_label.config(text=f"Proyectil: {self.current_projectile.get('name', 'N/A')}")
+        charge = self.charge_combo.get() if hasattr(self, 'charge_combo') else 'N/A'
+        self.sim3d_charge_label.config(text=f"Carga: {charge}")
+        range_val = np.sqrt(y[0, -1]**2 + y[1, -1]**2)
+        self.sim3d_range_label.config(text=f"Alcance: {range_val:.1f} m")
+        self.sim3d_deflection_label.config(text=f"Deflexión original: {y[1, -1]:.2f} m")
+        
+        self.correction_elevation.set(0.0)
+        self.correction_azimuth.set(0.0)
+        
+        self.update_3d_plot()
+        
+        self.sim3d_status.config(text="✅ Disparo cargado. Use los sliders para corregir.")
+    
+    def update_3d_plot(self):
+        """Actualiza el gráfico 3D con la trayectoria y puntos de impacto."""
+        if self.trajectory_data is None:
+            return
+        
+        self.ax3d.clear()
+        
+        data = self.trajectory_data
+        y = data["y"]
+        t = data["t"]
+        
+        # Trayectoria original
+        x_orig = y[0, :]
+        y_orig = y[1, :]
+        z_orig = -y[2, :]
+        
+        # Plotear trayectoria con gradiente de color
+        colors = plt.cm.viridis(np.linspace(0, 1, len(x_orig)))
+        for i in range(len(x_orig)-1):
+            self.ax3d.plot(x_orig[i:i+2], y_orig[i:i+2], z_orig[i:i+2], 
+                          color=colors[i], linewidth=2.5, alpha=0.8)
+        
+        # Punto de origen (pieza)
+        self.ax3d.scatter([0], [0], [0], c='green', s=150, marker='^', 
+                         label='🎯 Origen', alpha=0.9, edgecolors='darkgreen', linewidth=2)
+        
+        # Objetivo
+        target_range = np.sqrt(x_orig[-1]**2 + y_orig[-1]**2)
+        target_x = target_range * np.cos(np.radians(self.azimuth.get()))
+        target_y = target_range * np.sin(np.radians(self.azimuth.get()))
+        self.ax3d.scatter([target_x], [target_y], [0], c='blue', s=200, marker='*', 
+                         label='🎯 Objetivo', alpha=1.0, edgecolors='darkblue', linewidth=2)
+        
+        # Punto de impacto original
+        self.ax3d.scatter([x_orig[-1]], [y_orig[-1]], [z_orig[-1]], 
+                         c='red', s=120, marker='o', label='💥 Impacto Original', 
+                         alpha=0.8, edgecolors='darkred', linewidth=2)
+        
+        # Calcular impacto corregido
+        elev_corr = self.correction_elevation.get()
+        az_corr = self.correction_azimuth.get()
+        
+        elev_corr_deg = elev_corr * 360 / 6400
+        az_corr_deg = az_corr * 360 / 6400
+        
+        impact_vec = np.array([x_orig[-1], y_orig[-1]])
+        impact_dist = np.linalg.norm(impact_vec)
+        
+        new_az = self.azimuth.get() + az_corr_deg
+        corrected_x = impact_dist * np.cos(np.radians(new_az))
+        corrected_y = impact_dist * np.sin(np.radians(new_az))
+        
+        # Punto de impacto corregido
+        self.ax3d.scatter([corrected_x], [corrected_y], [z_orig[-1]], 
+                         c='orange', s=140, marker='s', label='✨ Impacto Corregido', 
+                         alpha=0.9, edgecolors='darkorange', linewidth=2)
+        
+        # Línea de error original
+        self.ax3d.plot([x_orig[-1], target_x], [y_orig[-1], target_y], [0, 0], 
+                      'r--', linewidth=1.5, alpha=0.6, label='Error Original')
+        
+        # Línea de error corregido
+        self.ax3d.plot([corrected_x, target_x], [corrected_y, target_y], [0, 0], 
+                      'g--', linewidth=1.5, alpha=0.6, label='Error Corregido')
+        
+        # Calcular errores
+        error_vec = np.array([target_x - x_orig[-1], target_y - y_orig[-1]])
+        error_dist = np.linalg.norm(error_vec)
+        
+        corrected_error_vec = np.array([target_x - corrected_x, target_y - corrected_y])
+        corrected_error_dist = np.linalg.norm(corrected_error_vec)
+        
+        # Actualizar label de error con color según precisión
+        if corrected_error_dist < 10:
+            error_color = "green"
+            precision = "¡EXCELENTE!"
+        elif corrected_error_dist < 50:
+            error_color = "orange"
+            precision = "BUENA"
+        else:
+            error_color = "red"
+            precision = "CORREGIR"
+        
+        self.sim3d_error_label.config(
+            text=f"Error: {error_dist:.1f} m → {corrected_error_dist:.1f} m ({precision})",
+            foreground=error_color
+        )
+        
+        # Actualizar barra de progreso (máximo error = 100m)
+        progress_value = max(0, 100 - min(corrected_error_dist, 100))
+        self.error_progress['value'] = progress_value
+        self.error_progress['style'] = 'green.Horizontal.TProgressbar' if progress_value > 90 else 'orange.Horizontal.TProgressbar'
+        
+        # Detalles del error
+        error_text = f"Error Original:  {error_dist:.2f} m\n"
+        error_text += f"Error Corregido: {corrected_error_dist:.2f} m\n"
+        error_text += f"Mejora:          {error_dist - corrected_error_dist:+.2f} m\n"
+        error_text += f"Deflexión orig:  {y_orig[-1]:.2f} m"
+        
+        self.sim3d_error_details.config(state="normal")
+        self.sim3d_error_details.delete(1.0, tk.END)
+        self.sim3d_error_details.insert(1.0, error_text)
+        self.sim3d_error_details.config(state="disabled")
+        
+        # Configurar ejes
+        self.ax3d.set_xlabel('Alcance X (m)', fontsize=11, fontweight='bold')
+        self.ax3d.set_ylabel('Deflexión Y (m)', fontsize=11, fontweight='bold')
+        self.ax3d.set_zlabel('Altitud Z (m)', fontsize=11, fontweight='bold')
+        self.ax3d.set_title('🎯 Simulador 3D de Corrección de Tiro', fontsize=13, fontweight='bold', pad=20)
+        
+        # Ajustar límites
+        max_range = max(x_orig[-1], target_x) * 1.15
+        self.ax3d.set_xlim([-max_range*0.05, max_range])
+        self.ax3d.set_ylim([-max_range*0.15, max_range*0.15])
+        self.ax3d.set_zlim([0, max(z_orig)*1.3])
+        
+        # Leyenda y grid
+        self.ax3d.legend(loc='upper left', fontsize=9, framealpha=0.9)
+        self.ax3d.grid(True, alpha=0.2)
+        
+        # Vista inicial mejorada
+        self.ax3d.view_init(elev=30, azim=-45)
+        
+        self.canvas3d.draw()
+        self.sim3d_status.config(text=f"✅ Corrección aplicada: Elev {elev_corr:+.1f} mils | Az {az_corr:+.1f} mils")
+    
+    def on_3d_correction_changed(self, event=None):
+        """Callback cuando se mueven los sliders de corrección."""
+        if self.trajectory_data is not None:
+            self.update_3d_plot()
+    
+    def reset_3d_corrections(self):
+        """Resetea las correcciones a cero."""
+        self.correction_elevation.set(0.0)
+        self.correction_azimuth.set(0.0)
+        if self.trajectory_data is not None:
+            self.update_3d_plot()
+        self.sim3d_status.config(text="Correcciones reseteadas.")
+    
+    def apply_3d_correction(self):
+        """Aplica la corrección al panel principal."""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Cargue un disparo primero.")
+            return
+        
+        # Obtener correcciones en mils
+        elev_corr = self.correction_elevation.get()
+        az_corr = self.correction_azimuth.get()
+        
+        # Convertir a grados
+        elev_corr_deg = elev_corr * 360 / 6400
+        az_corr_deg = az_corr * 360 / 6400
+        
+        # Aplicar al panel principal
+        current_elev = self.elevation.get()
+        current_az = self.azimuth.get()
+        
+        self.elevation.set(current_elev + elev_corr_deg)
+        self.azimuth.set(current_az + az_corr_deg)
+        
+        messagebox.showinfo("Corrección Aplicada", 
+                           f"Elevación: {current_elev:.2f}° → {self.elevation.get():.2f}°\n"
+                           f"Azimuth: {current_az:.2f}° → {self.azimuth.get():.2f}°\n\n"
+                           f"Presione EVALUAR para simular con los nuevos valores.")
+        
+        self.sim3d_status.config(text="Corrección aplicada al panel principal.")
+    
+    def export_3d_view(self):
+        """Exporta la vista 3D actual como imagen."""
+        if self.trajectory_data is None:
+            messagebox.showwarning("Sin datos", "Cargue un disparo primero.")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            self.fig3d.savefig(filename, dpi=150, bbox_inches='tight')
+            messagebox.showinfo("Éxito", f"Vista exportada a {filename}")
+            self.sim3d_status.config(text=f"Vista exportada: {filename}")
+
+    def search_firing_solutions(self):
+        """Busca todas las combinaciones proyectil/carga/arrastre que alcanzan el objetivo."""
+        try:
+            target_distance = float(self.target_distance.get())
+            target_azimuth = float(self.target_azimuth.get())
+            max_tof = float(self.max_tof.get()) if self.max_tof.get() else 999
+            for item in self.solutions_tree.get_children():
+                self.solutions_tree.delete(item)
+            solutions = []
+            for proj_file in os.listdir("data/projectiles"):
+                if not proj_file.endswith(".json"):
+                    continue
+                with open(f"data/projectiles/{proj_file}", "r", encoding="utf-8") as f:
+                    proj = json.load(f)
+                caliber = proj.get("caliber", 0)
+                if caliber == 105 and not self.include_105mm.get():
+                    continue
+                if caliber == 155 and not self.include_155mm.get():
+                    continue
+                for charge_name, charge_data in proj.get("charges", {}).items():
+                    v0 = charge_data["muzzle_velocity"]
+                    for drag_model in ["G1", "G7"]:
+                        temp_proj = proj.copy()
+                        temp_proj["muzzle_velocity"] = v0
+                        temp_proj["drag_function"] = drag_model
+                        generator = FiringTableGenerator(temp_proj, self.atmosphere, latitude=self.latitude.get(), wind_speed=self.wind_speed.get(), wind_direction=self.wind_direction.get())
+                        r_max = generator.simulate_trajectory(45.0, target_azimuth)["range"]
+                        if target_distance > r_max:
+                            continue
+                        if self.tiro_tenso_only.get():
+                            min_e, max_e = 0.5, 45.0
+                        elif self.tiro_curvo_only.get():
+                            min_e, max_e = 45.0, 85.0
+                        else:
+                            min_e, max_e = 0.5, 85.0
+                        elev = generator.find_elevation_for_range(target_distance, target_azimuth, min_elev=min_e, max_elev=max_e)
+                        if elev is None:
+                            continue
+                        result = generator.simulate_trajectory(elev, target_azimuth)
+                        if result["time"] > max_tof:
+                            continue
+                        qe_mils = elev * (6400 / 360)
+                        solutions.append({"proj_name": proj["name"], "charge": charge_name, "drag": drag_model, "qe": qe_mils, "elev": elev, "tof": result["time"], "max_alt": result["max_alt"], "v0": v0, "proj_file": f"data/projectiles/{proj_file}"})
+            solutions.sort(key=lambda x: x["qe"])
+            for sol in solutions:
+                self.solutions_tree.insert("", "end", values=(sol["proj_name"], sol["charge"], sol["drag"], f"{sol["qe"]:.1f}", f"{sol["tof"]:.1f}", f"{sol["max_alt"]:.1f}"))
+            if solutions:
+                best = solutions[0]
+                self.recommendation_label.config(text=f"SOLUCIÓN RECOMENDADA: {best["proj_name"]} + {best["charge"]} + {best["drag"]} | QE={best["qe"]:.1f} mils ({best["elev"]:.2f}°) | TOF={best["tof"]:.1f}s")
+                self.best_solution = best
+            else:
+                self.recommendation_label.config(text="No se encontraron soluciones con las restricciones dadas.")
+                self.best_solution = None
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al buscar soluciones: {str(e)}")
+
+    def apply_selected_solution(self):
+        selection = self.solutions_tree.selection()
+        if not selection:
+            messagebox.showwarning("Sin selección", "Seleccione una solución de la tabla.")
+            return
+        values = self.solutions_tree.item(selection[0])["values"]
+        proj_name = values[0]
+        charge = values[1]
+        drag = values[2]
+        qe_mils = float(values[3])
+        elevation = qe_mils * 360 / 6400
+        for proj_file in os.listdir("data/projectiles"):
+            if not proj_file.endswith(".json"):
+                continue
+            with open(f"data/projectiles/{proj_file}", "r", encoding="utf-8") as f:
+                proj = json.load(f)
+            if proj.get("name") == proj_name:
+                self.projectile_file.set(f"data/projectiles/{proj_file}")
+                self.load_projectile_info(f"data/projectiles/{proj_file}")
+                break
+        self.charge_combo.set(charge)
+        self.on_charge_selected(None)
+        self.drag_function.set(drag)
+        self.on_drag_changed(None)
+        self.elevation.set(elevation)
+        self.notebook.select(0)
+        messagebox.showinfo("Solución Aplicada", f"Proyectil: {proj_name}\nCarga: {charge}\nArrastre: {drag}\nElevación: {elevation:.2f}° ({qe_mils:.1f} mils)")
+
+    def export_planner_report(self):
+        if not self.solutions_tree.get_children():
+            messagebox.showwarning("Sin datos", "Busque soluciones primero.")
+            return
+        filename = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if filename:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("=" * 70 + "\n")
+                f.write("REPORTE DE PLANIFICACIÓN DE MISIÓN\n")
+                f.write("=" * 70 + "\n\n")
+                f.write(f"Distancia al objetivo: {self.target_distance.get()} m\n")
+                f.write(f"Azimuth: {self.target_azimuth.get()}°\n")
+                f.write(f"Altitud del objetivo: {self.target_altitude.get()} m\n")
+                f.write(f"Latitud: {self.latitude.get()}°\n")
+                f.write(f"Viento: {self.wind_speed.get()} m/s @ {self.wind_direction.get()}°\n\n")
+                f.write("SOLUCIONES ENCONTRADAS:\n")
+                f.write("-" * 70 + "\n")
+                for item in self.solutions_tree.get_children():
+                    values = self.solutions_tree.item(item)["values"]
+                    f.write(f"  Proyectil: {values[0]}\n")
+                    f.write(f"    Carga: {values[1]} | Arrastre: {values[2]}\n")
+                    f.write(f"    QE: {values[3]} mils | TOF: {values[4]} s | Alt. Máx: {values[5]} m\n\n")
+                if hasattr(self, "best_solution") and self.best_solution:
+                    f.write("-" * 70 + "\n")
+                    f.write("SOLUCIÓN RECOMENDADA:\n")
+                    f.write(f"  {self.best_solution["proj_name"]} + {self.best_solution["charge"]} + {self.best_solution["drag"]}\n")
+                    f.write(f"  QE: {self.best_solution["qe"]:.1f} mils ({self.best_solution["elev"]:.2f}°)\n")
+                    f.write(f"  TOF: {self.best_solution["tof"]:.1f} s\n")
+            messagebox.showinfo("Éxito", f"Reporte exportado a {filename}")
+
+
+    def generate_firing_table(self):
+        """Genera la tabla de tiro."""
+        if not self.current_projectile:
+            messagebox.showerror("Error", "No hay proyectil cargado")
+            return
+        
+        try:
+            start = int(self.table_start_range.get())
+            end = int(self.table_end_range.get())
+            step = int(self.table_step.get())
+            azimuth = float(self.table_azimuth.get())
+            
+            from src.tables.firing_table_generator import FiringTableGenerator
+            
+            generator = FiringTableGenerator(
+                self.current_projectile,
+                self.atmosphere,
+                latitude=self.latitude.get(),
+                wind_speed=self.wind_speed.get(),
+                wind_direction=self.wind_direction.get(),
+                use_magnus=self.use_magnus.get(),
+                spin_rate_rpm=self.spin_rate_rpm.get(),
+                rifling_twist=self.rifling_twist.get()
+            )
+            
+            ranges = list(range(start, end + 1, step))
+            self.table_progress['maximum'] = len(ranges)
+            self.table_status.config(text=f"Generando tabla para {len(ranges)} alcances...")
+            
+            for item in self.table_tree.get_children():
+                self.table_tree.delete(item)
+            
+            table_data = []
+            unreachable_shown = set()
+            
+            for i, target in enumerate(ranges):
+                self.table_status.config(text=f"Calculando {i+1}/{len(ranges)}: {target} m...")
+                self.table_progress['value'] = i + 1
+                self.root.update()
+                
+                mode = self.search_mode.get()
+                elev = None
+                
+                if mode == 'Ambos':
+                    elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=45.0)
+                    if elev is None:
+                        elev = generator.find_elevation_for_range(target, azimuth, min_elev=45.0, max_elev=85.0)
+                elif mode == 'Tiro tenso (preferido)':
+                    elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=45.0)
+                elif mode == 'Tiro curvo':
+                    elev = generator.find_elevation_for_range(target, azimuth, min_elev=45.0, max_elev=85.0)
+                else:
+                    elev = generator.find_elevation_for_range(target, azimuth, min_elev=0.5, max_elev=85.0)
+                
+                if elev is None:
+                    if target not in unreachable_shown:
+                        unreachable_shown.add(target)
+                        
+                        r_max = generator.simulate_trajectory(45.0, azimuth)['range']
+                        v0 = self.current_projectile['muzzle_velocity']
+                        drag_func = self.current_projectile['drag_function']
+                        
+                        suggestions = []
+                        
+                        if target > r_max:
+                            suggestions.append(f"❌ Alcance {target} m NO ALCANZABLE")
+                            suggestions.append(f"📊 Alcance máximo físico: {r_max:.0f} m")
+                            suggestions.append(f"🎯 Objetivo: {target:.0f} m (faltan {target - r_max:.0f} m)")
+                            suggestions.append("")
+                            suggestions.append("🔧 OPCIONES PARA AUMENTAR EL ALCANCE:")
+                            
+                            v0_needed = v0 * ((target / r_max) ** (1/1.8))
+                            suggestions.append(f"\n1. Aumentar velocidad inicial:")
+                            suggestions.append(f"   • Actual: {v0:.0f} m/s → Necesaria: ~{v0_needed:.0f} m/s")
+                            
+                            if drag_func == 'G1':
+                                r_g7_est = r_max * 1.4
+                                suggestions.append(f"\n2. Cambiar a modelo G7:")
+                                suggestions.append(f"   • Actual: G1 (~{r_max:.0f} m) → G7 (~{r_g7_est:.0f} m)")
+                                if r_g7_est >= target:
+                                    suggestions.append(f"   ✅ ¡G7 SÍ alcanzaría {target} m!")
+                            
+                            bc_actual = self.current_projectile['ballistic_coefficient']
+                            bc_needed = bc_actual * (target / r_max) ** 0.5
+                            suggestions.append(f"\n3. Aumentar Coeficiente Balístico:")
+                            suggestions.append(f"   • Actual: {bc_actual:.3f} → Necesario: ~{bc_needed:.3f}")
+                            
+                            messagebox.showwarning(
+                                f"❌ Alcance {target} m NO ALCANZABLE",
+                                "\n".join(suggestions)
+                            )
+                        else:
+                            suggestions.append(f"ℹ️ Alcance {target} m SÍ es alcanzable")
+                            suggestions.append(f"📊 Alcance máximo: {r_max:.0f} m")
+                            suggestions.append("")
+                            suggestions.append("🔧 CAMBIA EL MODO DE BÚSQUEDA:")
+                            if mode == 'Tiro tenso (preferido)':
+                                suggestions.append("   • Prueba con 'Tiro curvo' o 'Ambos'")
+                            elif mode == 'Tiro curvo':
+                                suggestions.append("   • Prueba con 'Tiro tenso' o 'Ambos'")
+                            else:
+                                suggestions.append("   • Verifica los límites de elevación")
+                            
+                            messagebox.showinfo(
+                                f"ℹ️ Alcance {target} m - Cambiar modo",
+                                "\n".join(suggestions)
+                            )
+                    
+                    # DETENER LA GENERACIÓN COMPLETAMENTE
+                    self.table_status.config(text=f"Generación detenida en {target} m")
+                    self.table_progress['value'] = self.table_progress['maximum']  # <-- BARRA AL 100%
+                    break
+                
+                # Procesar resultado (solo si elev no es None)
+                result = generator.simulate_trajectory(elev, azimuth)
+                
+                qe_mils = elev * (6400 / 360)
+                drift_mils = (result['deflection'] / result['range']) * (6400 / (2 * np.pi))
+                
+                deflex_m = result['deflection']  # Deflexión en metros
+                deflex_mils = (deflex_m / result['range']) * (6400 / (2 * np.pi))  # Convertir a mils
+                
+                row_data = {
+                    'DIST': int(round(result['range'])),
+                    'QE': round(qe_mils, 1),
+                    'TOF': round(result['time'], 1),
+                    'DRIFT_MILS': round(drift_mils, 2),
+                    'DEFLEX_MILS': round(deflex_mils, 2),
+                    'MAX_ALT': round(result['max_alt'], 1),
+                    'IMPACT_VEL': round(result['impact_vel'], 1)
+                }
+
+                table_data.append(row_data)
+                
+                self.table_tree.insert('', 'end', values=(
+                    row_data['DIST'], row_data['QE'], row_data['TOF'],
+                    row_data['DRIFT_MILS'], row_data['DEFLEX_MILS'], 
+                    row_data['MAX_ALT'], row_data['IMPACT_VEL']
+                ))
+            
+            import pandas as pd
+            self.generated_table = pd.DataFrame(table_data)
+            self.table_status.config(text=f"Tabla generada: {len(table_data)} puntos calculados.")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error al generar tabla: {str(e)}")
+            self.table_status.config(text="Error en la generación.")
+    
+
+    def export_firing_table_csv(self):
+        """Exporta la tabla generada a CSV"""
+        if self.generated_table is None:
+            messagebox.showwarning("Sin datos", "Genere una tabla primero.")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            self.generated_table.to_csv(filename, index=False)
+            messagebox.showinfo("Éxito", f"Tabla exportada a {filename}")
+    
+
+    def export_firing_table_nato(self):
+        """Exporta la tabla en formato NATO"""
+        if self.generated_table is None:
+            messagebox.showwarning("Sin datos", "Genere una tabla primero.")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            with open(filename, 'w') as f:
+                f.write("# TABLA DE TIRO - FORMATO NATO\n")
+                f.write(f"# PROYECTIL: {self.current_projectile['name']}\n")
+                f.write(f"# CARGA: {self.charge_combo.get() if hasattr(self, 'charge_combo') else 'N/A'}\n")
+                f.write(f"# LATITUD: {self.latitude.get()}°\n")
+                f.write(f"# VIENTO: {self.wind_speed.get()} m/s @ {self.wind_direction.get()}°\n")
+                f.write("#" + "=" * 50 + "\n")
+                
+                for _, row in self.generated_table.iterrows():
+                    dist = int(row['DIST'])
+                    qe = float(row['QE'])
+                    tof = float(row['TOF'])
+                    drift_mils = float(row['DRIFT_MILS'])
+                    deflex_mils = float(row['DEFLEX_MILS'])
+                    max_alt = float(row['MAX_ALT'])
+                    impact_vel = float(row['IMPACT_VEL'])
+                    
+                    f.write(f"  {dist:6d}   {qe:8.1f}   {tof:6.1f}   {drift_mils:8.2f}   {deflex_mils:8.2f}   {max_alt:9.1f}   {impact_vel:14.1f}\n")
+            
+            messagebox.showinfo("Éxito", f"Tabla NATO exportada a {filename}")
+
+# ============================================================================
+# NUEVOS MÉTODOS PARA EL PANEL DE RESULTADOS INTEGRADO
+# ============================================================================
+    def update_results_panel(self):
+        """Actualiza el panel derecho con los resultados de la simulación."""
+        if not self.initial_results or not self.current_projectile:
+            return
+        
+        r = self.initial_results
+        
+        # Solo datos de vuelo
+        self.result_range_label.config(text=f"Alcance: {r['range']:.2f} m")
+        self.result_deflection_label.config(text=f"Deflexión: {r['deflection']:.2f} m")
+        self.result_time_label.config(text=f"Tiempo vuelo: {r['time']:.2f} s")
+        self.result_maxalt_label.config(text=f"Altitud máx: {r['max_alt']:.2f} m")
+        self.result_impactvel_label.config(text=f"Velocidad final: {r['impact_vel']:.2f} m/s")
+        self.result_mach_label.config(text=f"Mach final: {r['mach']:.3f}")
+        
+        # Generar texto explicativo
+        self.generate_explanation(r)
+    
+    def generate_explanation(self, r):
+        """Genera texto explicativo basado en los resultados de la simulación."""
+        proj_name = self.current_projectile.get('name', 'el proyectil')
+        fuze = self.fuze_type.get()
+        drag = self.drag_function.get()
+        elev = self.elevation.get()
+        
+        # Determinar tipo de trayectoria
+        if elev >= 45:
+            traj_type = "tiro curvo"
+        else:
+            traj_type = "tiro tenso"
+        
+        # Determinar régimen de velocidad
+        if r['mach'] > 1.2:
+            regime = "supersónico"
+        elif r['mach'] > 0.8:
+            regime = "transónico"
+        else:
+            regime = "subsónico"
+        
+        # Construir explicación
+        explanation = ""
+        explanation += f"El proyectil {proj_name} alcanzó {r['range']:.0f} metros en {r['time']:.1f} segundos, "
+        explanation += f"con una altura máxima de {r['max_alt']:.0f} metros.\n\n"
+        
+        explanation += f"La velocidad final de {r['impact_vel']:.0f} m/s (Mach {r['mach']:.3f}) "
+        explanation += f"indica que impactó en régimen {regime}. "
+        
+        if drag in ['G7', 'G5']:
+            explanation += f"El modelo de arrastre {drag} es adecuado para proyectiles de bajo arrastre.\n\n"
+        else:
+            explanation += f"El modelo de arrastre {drag} es el estándar para este tipo de munición.\n\n"
+        
+        if abs(r['deflection']) > 1:
+            direction = "derecha" if r['deflection'] > 0 else "izquierda"
+            explanation += f"La deflexión de {abs(r['deflection']):.2f} m hacia la {direction} "
+            explanation += f"es causada principalmente por el efecto Coriolis (latitud {self.latitude.get():.0f}°).\n\n"
+        
+        if fuze == "TIA":
+            explanation += f"Espoleta TIA programada a {self.fuze_time.get():.1f} segundos. "
+            if r.get('final_alt', 0) > 0.1:
+                explanation += f"Detonación aérea a {r['final_alt']:.0f} metros de altura."
+        else:
+            explanation += "Espoleta PDA: detonación por impacto en el suelo."
+        
+        explanation += "\n\nArrastra el punto amarillo sobre la trayectoria para ver los datos en cualquier punto."
+        
+        # --- SECCIÓN COMPARATIVA SI EL MODELO NO ES EL RECOMENDADO ---
+        recommended = self._get_recommended_drag(self.current_projectile.get('name', ''))
+        selected = self.drag_function.get()
+        
+        if selected != recommended:
+            explanation += "\n\n"
+            explanation += "ANALISIS DEL MODELO DE ARRASTRE SELECCIONADO\n"
+            explanation += "\n"
+            
+            if recommended == 'G1':
+                explanation += f"El modelo recomendado para {proj_name} es G1 (base plana, estandar historico).\n\n"
+                if selected in ['G7', 'G5']:
+                    explanation += f"Al usar '{selected}' (disenado para proyectiles de bajo arrastre/bote-truncado):\n"
+                    explanation += f"   - El simulador asume erroneamente que el proyectil es mas aerodinamico.\n"
+                    explanation += f"   - El alcance calculado sera MENOR que el alcance real (subestimacion).\n"
+                    explanation += f"   - La trayectoria sera menos tensa de lo real.\n"
+                else:
+                    explanation += f"El modelo '{selected}' no es el optimo para este tipo de municion.\n"
+            else:  # recommended == 'G7'
+                explanation += f"El modelo recomendado para {proj_name} es G7 (base troncoconica, bajo arrastre).\n\n"
+                if selected == 'G1':
+                    explanation += f"Al usar 'G1' (disenado para proyectiles de base plana mas antiguos):\n"
+                    explanation += f"   - El simulador asume que el proyectil tiene MAYOR resistencia aerodinamica.\n"
+                    explanation += f"   - El alcance calculado sera MAYOR que el alcance real (sobrestimacion).\n"
+                    explanation += f"   - La trayectoria sera mas tensa de lo real.\n"
+                else:
+                    explanation += f"El modelo '{selected}' no es el optimo para este tipo de municion.\n"
+            
+            explanation += "\nRecomendacion: Use el modelo sugerido automaticamente para obtener resultados mas precisos."
+        
+        # Insertar en el widget
+        self.explanation_text.config(state="normal")
+        self.explanation_text.delete(1.0, tk.END)
+        self.explanation_text.insert(1.0, explanation)
+        self.explanation_text.config(state="disabled")
+
+# ================================================================================
+# PUNTO DE ENTRADA PRINCIPAL
+# ================================================================================
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BallisticGUI(root)
+    root.mainloop()
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+GENERADOR DE TABLAS DE TIRO - FORMATO FT (Firing Tables) - VERSION OPTIMIZADA
+Formato estándar militar con QE como entrada principal
+"""
+
+import math
+import copy
+
+# ==================================================================
+# 1. ENTORNO BALISTICO (ISA)
+# ==================================================================
+class EntornoBalistico:
+    def __init__(self, latitud_grados=14.08, viento_x=0.0, viento_z=0.0, temperatura_polvora=21.0):
+        self.latitud = math.radians(latitud_grados)
+        self.omega_tierra = 7.2921159e-5
+        self.radio_tierra = 6371000.0
+        self.g0 = 9.80665
+        self.temp_0 = 288.15
+        self.presion_0 = 101325.0
+        self.L = 0.0065
+        self.R = 287.05
+        self.viento_x = viento_x
+        self.viento_z = viento_z
+        self.temp_polvora = temperatura_polvora
+
+    def get_gravedad(self, altitud):
+        return self.g0 * (self.radio_tierra / (self.radio_tierra + altitud)) ** 2
+
+    def atmosfera(self, altitud):
+        if altitud < 11000:
+            T = self.temp_0 - self.L * altitud
+            P = self.presion_0 * (T / self.temp_0) ** (self.g0 / (self.L * self.R))
+        else:
+            T_11 = self.temp_0 - self.L * 11000
+            P_11 = self.presion_0 * (T_11 / self.temp_0) ** (self.g0 / (self.L * self.R))
+            T = T_11
+            P = P_11 * math.exp(-self.g0 * (altitud - 11000) / (self.R * T))
+        rho = P / (self.R * T)
+        return rho, T
+
+    def correccion_v0_por_temperatura(self, v0_nominal):
+        delta = 0.0008 * (self.temp_polvora - 21.0)
+        return v0_nominal * (1.0 + delta)
+
+# ==================================================================
+# 2. AERODINAMICA - Tabla G7
+# ==================================================================
+class CalculadoraAerodinamica:
+    TABLA_G7 = [
+        (0.00, 0.120), (0.70, 0.122), (0.85, 0.135), (0.95, 0.200),
+        (1.00, 0.350), (1.05, 0.380), (1.10, 0.375), (1.20, 0.355),
+        (1.50, 0.310), (2.00, 0.260), (3.00, 0.190), (5.00, 0.150)
+    ]
+
+    @staticmethod
+    def cd_g7(mach):
+        tabla = CalculadoraAerodinamica.TABLA_G7
+        if mach <= tabla[0][0]:
+            return tabla[0][1]
+        if mach >= tabla[-1][0]:
+            return tabla[-1][1]
+        for i in range(len(tabla)-1):
+            if tabla[i][0] <= mach <= tabla[i+1][0]:
+                m1, c1 = tabla[i]
+                m2, c2 = tabla[i+1]
+                return c1 + (c2 - c1) * (mach - m1) / (m2 - m1)
+        return 0.2
+
+# ==================================================================
+# 3. DEFINICION DE PROYECTILES
+# ==================================================================
+class Proyectil:
+    def __init__(self, nombre, calibre_m, masa_kg, v0_nominal_mps, factor_forma=1.0,
+                 es_hera=False, empuje_N=0, t_empuje_inicio=0, t_empuje_fin=0, 
+                 perdida_masa_kg_s=0.0, fuente=""):
+        self.nombre = nombre
+        self.calibre = calibre_m
+        self.masa = masa_kg
+        self.v0_nominal = v0_nominal_mps
+        self.factor_forma = factor_forma
+        self.es_hera = es_hera
+        self.empuje_N = empuje_N
+        self.t_empuje_inicio = t_empuje_inicio
+        self.t_empuje_fin = t_empuje_fin
+        self.perdida_masa_kg_s = perdida_masa_kg_s
+        self.fuente = fuente
+
+    def cd(self, mach):
+        return CalculadoraAerodinamica.cd_g7(mach) * self.factor_forma
+
+    def masa_actual(self, t):
+        if not self.es_hera or t < self.t_empuje_inicio:
+            return self.masa
+        if t > self.t_empuje_fin:
+            return self.masa - self.perdida_masa_kg_s * (self.t_empuje_fin - self.t_empuje_inicio)
+        return self.masa - self.perdida_masa_kg_s * (t - self.t_empuje_inicio)
+
+# ==================================================================
+# 4. MOTOR BALISTICO (RK4)
+# ==================================================================
+class MotorBalistico:
+    def __init__(self, entorno=None):
+        self.env = entorno if entorno else EntornoBalistico()
+
+    def derivadas(self, t, estado, proy):
+        x, y, z, vx, vy, vz = estado
+        rho, temp_k = self.env.atmosfera(y)
+        g = self.env.get_gravedad(y)
+
+        v_air_x = vx - self.env.viento_x
+        v_air_y = vy
+        v_air_z = vz - self.env.viento_z
+        v_total_air = math.hypot(v_air_x, v_air_y, v_air_z)
+        if v_total_air < 0.001:
+            v_total_air = 0.001
+
+        c_sonido = math.sqrt(1.4 * self.env.R * temp_k)
+        mach = v_total_air / c_sonido
+        cd = proy.cd(mach)
+        area = math.pi * (proy.calibre/2)**2
+        arrastre = 0.5 * rho * v_total_air**2 * cd * area
+
+        empuje = 0.0
+        masa_actual = proy.masa_actual(t)
+        if proy.es_hera and proy.t_empuje_inicio <= t <= proy.t_empuje_fin:
+            empuje = proy.empuje_N
+
+        ax = (empuje * (vx/v_total_air) - arrastre * (v_air_x/v_total_air)) / masa_actual
+        ay = -g + (empuje * (vy/v_total_air) - arrastre * (v_air_y/v_total_air)) / masa_actual
+
+        if proy.calibre > 0.13:
+            k_spin = 1.8e-5
+            factor_cuadratico = 1.0 + 0.02 * (max(0, x) / 1000.0)
+        else:
+            k_spin = 2.5e-5
+            factor_cuadratico = 1.0 + 0.015 * (max(0, x) / 1000.0)
+        a_spin = k_spin * vx * (max(0, x) / 1000.0) * factor_cuadratico
+
+        a_coriolis = -2.0 * self.env.omega_tierra * vx * math.sin(self.env.latitud)
+        az = (-arrastre * (v_air_z/v_total_air) / masa_actual) + a_coriolis + a_spin
+
+        return [vx, vy, vz, ax, ay, az]
+
+    def simular_rk4(self, proy, qe_mils, dt=0.1, tiempo_max=120.0):
+        v0_corregida = self.env.correccion_v0_por_temperatura(proy.v0_nominal)
+        qe_rad = qe_mils * math.pi / 3200.0
+        vx0 = v0_corregida * math.cos(qe_rad)
+        vy0 = v0_corregida * math.sin(qe_rad)
+        estado = [0.0, 0.0, 0.0, vx0, vy0, 0.0]
+        t = 0.0
+        y_max = 0.0
+
+        while t < tiempo_max:
+            caida = (estado[0]**2) / (2.0 * self.env.radio_tierra)
+            if estado[1] < -caida and t > 0.5:
+                break
+
+            k1 = self.derivadas(t, estado, proy)
+            e2 = [estado[i] + 0.5*dt*k1[i] for i in range(6)]
+            k2 = self.derivadas(t+0.5*dt, e2, proy)
+            e3 = [estado[i] + 0.5*dt*k2[i] for i in range(6)]
+            k3 = self.derivadas(t+0.5*dt, e3, proy)
+            e4 = [estado[i] + dt*k3[i] for i in range(6)]
+            k4 = self.derivadas(t+dt, e4, proy)
+
+            for i in range(6):
+                estado[i] += (dt/6.0)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i])
+
+            t += dt
+            if estado[1] > y_max:
+                y_max = estado[1]
+
+        return estado[0], estado[2], t, y_max
+
+# ==================================================================
+# 5. GENERADOR DE TABLAS FT (FORMATO ESTANDAR MILITAR)
+# ==================================================================
+class GeneradorTablasFT:
+    def __init__(self, motor):
+        self.motor = motor
+        self.KNOT_TO_MPS = 0.514444
+
+    def encontrar_qe_para_alcance(self, proy, alcance_objetivo, qe_min, qe_max, tolerancia=10):
+        for _ in range(30):
+            qe = (qe_min + qe_max) / 2.0
+            alcance, _, _, _ = self.motor.simular_rk4(proy, qe)
+            if abs(alcance - alcance_objetivo) < tolerancia:
+                return qe
+            if alcance < alcance_objetivo:
+                qe_min = qe
+            else:
+                qe_max = qe
+        return (qe_min + qe_max) / 2.0
+
+    def generar_tabla_ft(self, proy, qe_inicio, qe_fin, qe_step, verbose=True):
+        """
+        Genera tabla de tiro en formato FT estándar
+        Columnas:
+        1. QE (MILS)
+        2. Corrección QE proyectil alternativo (MILS) - 0 para base
+        3. Corrección por altura +50m (MILS) - estimado
+        4. Corrección por rango +100m (MILS) - estimado
+        5. Corrección por viento 1 nudo (METROS) - estimado
+        6. Tiempo de vuelo (SEG)
+        7. Alcance (METROS)
+        8. Corrección deflexión (MILS)
+        """
+        resultados = []
+
+        if verbose:
+            print("\n" + "="*110)
+            print(f"TABLA DE TIRO - {proy.nombre}")
+            print(f"v0 = {proy.v0_nominal} m/s | Masa = {proy.masa} kg | Fuente: {proy.fuente}")
+            print("="*110)
+            print(f"{'QE':>6} {'CORR_PRJ':>10} {'CORR_H50':>10} {'CORR_R100':>10} {'WIND_1KT':>10} {'TOF':>8} {'RANGE':>10} {'DEFL':>10}")
+            print(f"{'(MILS)':>6} {'(MILS)':>10} {'(MILS)':>10} {'(MILS)':>10} {'(M)':>10} {'(SEC)':>8} {'(M)':>10} {'(MILS)':>10}")
+            print("-"*110)
+
+        # Primera pasada: calcular todos los alcances
+        alcances_por_qe = {}
+        qe = qe_inicio
+        while qe <= qe_fin:
+            alcance, deriva, tof, altura_max = self.motor.simular_rk4(proy, qe)
+            if alcance > 100:
+                alcances_por_qe[qe] = (alcance, deriva, tof)
+            qe += qe_step
+
+        # Segunda pasada: calcular correcciones
+        qe_list = sorted(alcances_por_qe.keys())
+
+        for i, qe in enumerate(qe_list):
+            alcance, deriva, tof = alcances_por_qe[qe]
+
+            # Corrección por altura (estimada basada en pendiente)
+            if i > 0 and i < len(qe_list) - 1:
+                qe_prev = qe_list[i-1]
+                qe_next = qe_list[i+1]
+                alc_prev = alcances_por_qe[qe_prev][0]
+                alc_next = alcances_por_qe[qe_next][0]
+
+                # d(QE)/d(alcance) * 50m = corrección aproximada
+                dqe_dalc = (qe_next - qe_prev) / (alc_next - alc_prev) if (alc_next - alc_prev) > 0 else 0
+                corr_altura = dqe_dalc * 50  # Corrección para +50m de altura
+
+                # Corrección por rango +100m
+                corr_rango = dqe_dalc * 100
+            else:
+                corr_altura = 0.5  # Valor por defecto
+                corr_rango = 1.0
+
+            # Corrección por viento (simulación rápida)
+            self.motor.env.viento_x = self.KNOT_TO_MPS  # 1 nudo de frente
+            alcance_viento, _, _, _ = self.motor.simular_rk4(proy, qe)
+            self.motor.env.viento_x = 0
+            corr_viento = alcance - alcance_viento  # Positivo = viento reduce alcance
+
+            # Corrección de deflexión
+            if alcance > 0:
+                defl_mils = (deriva / alcance) * 1000
+            else:
+                defl_mils = 0
+
+            resultados.append({
+                'qe': round(qe, 1),
+                'corr_proy': 0.0,  # Base
+                'corr_altura': round(abs(corr_altura), 1),
+                'corr_rango': round(abs(corr_rango), 1),
+                'corr_viento': round(corr_viento, 1),
+                'tof': round(tof, 1),
+                'alcance': round(alcance, 0),
+                'corr_defl': round(defl_mils, 1)
+            })
+
+            if verbose:
+                print(f"{qe:>6.1f} {0.0:>10.1f} {abs(corr_altura):>10.1f} {abs(corr_rango):>10.1f} {corr_viento:>10.1f} {tof:>8.1f} {alcance:>10.0f} {defl_mils:>10.1f}")
+
+        return resultados
+
+# ==================================================================
+# 6. BASE DE DATOS DE PROYECTILES
+# ==================================================================
+PROYECTILES = {
+    "105_HE_M1": Proyectil(
+        nombre="105mm HE M1", calibre_m=0.105, masa_kg=14.97, v0_nominal_mps=480,
+        factor_forma=1.042, fuente="FT 105-H-6 (1961)"
+    ),
+    "105_ILUM_M314A3": Proyectil(
+        nombre="105mm ILUM M314A3", calibre_m=0.105, masa_kg=14.77, v0_nominal_mps=468,
+        factor_forma=1.02, fuente="TM 43-0001-28"
+    ),
+    "105_SMOKE_M84": Proyectil(
+        nombre="105mm SMOKE HC M84", calibre_m=0.105, masa_kg=14.5, v0_nominal_mps=468,
+        factor_forma=1.05, fuente="TM 43-0001-28"
+    ),
+    "155_HE_M107": Proyectil(
+        nombre="155mm HE M107", calibre_m=0.155, masa_kg=43.9, v0_nominal_mps=565,
+        factor_forma=1.00, fuente="TM 43-0001-28"
+    ),
+    "155_HERA_M549A1": Proyectil(
+        nombre="155mm HERA M549A1", calibre_m=0.155, masa_kg=43.5, v0_nominal_mps=600,
+        factor_forma=1.05, es_hera=True, empuje_N=2100, t_empuje_inicio=7.0,
+        t_empuje_fin=10.0, perdida_masa_kg_s=0.12, fuente="TM 43-0001-28"
+    ),
+    "155_RAAM_M718": Proyectil(
+        nombre="155mm RAAM M718/M741", calibre_m=0.155, masa_kg=47.0, v0_nominal_mps=565,
+        factor_forma=1.08, fuente="FM 20-32"
+    ),
+    "155_ILUM_M485": Proyectil(
+        nombre="155mm ILUM M485", calibre_m=0.155, masa_kg=45.4, v0_nominal_mps=630,
+        factor_forma=1.02, fuente="FM 6-40"
+    ),
+}
+
+def crear_proy_con_carga(proy_base, v0_nuevo):
+    proy = copy.copy(proy_base)
+    proy.v0_nominal = v0_nuevo
+    return proy
+
+# ==================================================================
+# 7. GENERACION DE TABLAS
+# ==================================================================
+def generar_todas_las_tablas_ft():
+    env = EntornoBalistico(latitud_grados=14.08, viento_x=0.0, viento_z=0.0, 
+                           temperatura_polvora=21.0)
+    motor = MotorBalistico(env)
+    generador = GeneradorTablasFT(motor)
+
+    todas_las_tablas = {}
+
+    # ============================================================
+    # PROYECTILES 105mm
+    # ============================================================
+    print("="*110)
+    print("TABLAS DE TIRO - PROYECTILES 105mm")
+    print("="*110)
+
+    todas_las_tablas["105_HE_M1"] = generador.generar_tabla_ft(
+        PROYECTILES["105_HE_M1"], qe_inicio=50, qe_fin=800, qe_step=10
+    )
+
+    todas_las_tablas["105_ILUM_M314A3"] = generador.generar_tabla_ft(
+        PROYECTILES["105_ILUM_M314A3"], qe_inicio=50, qe_fin=800, qe_step=10
+    )
+
+    todas_las_tablas["105_SMOKE_M84"] = generador.generar_tabla_ft(
+        PROYECTILES["105_SMOKE_M84"], qe_inicio=50, qe_fin=800, qe_step=10
+    )
+
+    # ============================================================
+    # PROYECTILES 155mm CON CARGAS
+    # ============================================================
+    print("\n" + "="*110)
+    print("TABLAS DE TIRO - PROYECTILES 155mm")
+    print("="*110)
+
+    proy_he_base = PROYECTILES["155_HE_M107"]
+
+    # GB M3A1 (375 m/s)
+    proy_he_gb = crear_proy_con_carga(proy_he_base, 375)
+    proy_he_gb.nombre = "155mm HE M107 (GB M3A1 - v0=375 m/s)"
+    todas_las_tablas["155_HE_GB"] = generador.generar_tabla_ft(
+        proy_he_gb, qe_inicio=100, qe_fin=600, qe_step=10
+    )
+
+    # WB M4A2 (565 m/s)
+    proy_he_wb = crear_proy_con_carga(proy_he_base, 565)
+    proy_he_wb.nombre = "155mm HE M107 (WB M4A2 - v0=565 m/s)"
+    todas_las_tablas["155_HE_WB"] = generador.generar_tabla_ft(
+        proy_he_wb, qe_inicio=100, qe_fin=700, qe_step=10
+    )
+
+    # WB M119A2 (685 m/s)
+    proy_he_wb2 = crear_proy_con_carga(proy_he_base, 685)
+    proy_he_wb2.nombre = "155mm HE M107 (WB M119A2 - v0=685 m/s)"
+    todas_las_tablas["155_HE_WB2"] = generador.generar_tabla_ft(
+        proy_he_wb2, qe_inicio=100, qe_fin=750, qe_step=10
+    )
+
+    # RB M203 (827 m/s)
+    proy_he_rb = crear_proy_con_carga(proy_he_base, 827)
+    proy_he_rb.nombre = "155mm HE M107 (RB M203 - v0=827 m/s)"
+    todas_las_tablas["155_HE_RB"] = generador.generar_tabla_ft(
+        proy_he_rb, qe_inicio=100, qe_fin=600, qe_step=10
+    )
+
+    # HERA M549A1 con WB M119A2
+    proy_hera = copy.copy(PROYECTILES["155_HERA_M549A1"])
+    proy_hera_wb = crear_proy_con_carga(proy_hera, 685)
+    proy_hera_wb.nombre = "155mm HERA M549A1 (WB M119A2 - v0=685 m/s)"
+    todas_las_tablas["155_HERA"] = generador.generar_tabla_ft(
+        proy_hera_wb, qe_inicio=100, qe_fin=750, qe_step=10
+    )
+
+    # RAAM M718/M741 con WB M4A2
+    proy_raam = copy.copy(PROYECTILES["155_RAAM_M718"])
+    proy_raam_wb = crear_proy_con_carga(proy_raam, 565)
+    proy_raam_wb.nombre = "155mm RAAM M718/M741 (WB M4A2 - v0=565 m/s)"
+    todas_las_tablas["155_RAAM"] = generador.generar_tabla_ft(
+        proy_raam_wb, qe_inicio=100, qe_fin=700, qe_step=10
+    )
+
+    # ILUM M485 con WB M4A2
+    proy_ilum = copy.copy(PROYECTILES["155_ILUM_M485"])
+    proy_ilum_wb = crear_proy_con_carga(proy_ilum, 565)
+    proy_ilum_wb.nombre = "155mm ILUM M485 (WB M4A2 - v0=565 m/s)"
+    todas_las_tablas["155_ILUM"] = generador.generar_tabla_ft(
+        proy_ilum_wb, qe_inicio=100, qe_fin=700, qe_step=10
+    )
+
+    return todas_las_tablas
+
+if __name__ == "__main__":
+    resultados = generar_todas_las_tablas_ft()

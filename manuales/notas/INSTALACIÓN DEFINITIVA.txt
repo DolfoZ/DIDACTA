@@ -1,0 +1,233 @@
+ INSTALACIÓN DEFINITIVA
+\#!/bin/bash
+set -euo pipefail
+
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║        ARES OS v2.6 — INSTALACIÓN COMPLETA                    ║"
+echo "║        Sistema Operativo Web de Artillería de Campaña         ║"
+echo "║        Root: Santa Barbara | Gateway: 192.168.88.1            ║"
+echo "╚══════════════════════════════════════════════════════════════╝"
+
+# ===== 1. DEPENDENCIAS DEL SISTEMA =====
+apt update && apt install -y \
+  nodejs npm python3 python3-pip python3-venv python3-dev \
+  postgresql postgresql-contrib nginx certbot \
+  wireguard wireguard-tools mumble-server git curl wget \
+  build-essential pkg-config libcairo2-dev libpango1.0-dev \
+  libjpeg-dev libgif-dev librsvg2-dev golang-go \
+  netdata code-server podman
+
+# ===== 2. PYTHON VENV =====
+python3 -m venv /opt/ares/venv
+source /opt/ares/venv/bin/activate
+pip install --upgrade pip
+pip install mcp fastapi uvicorn psycopg2-binary numpy scipy pydantic pydantic-settings
+
+# ===== 3. POSTGRESQL =====
+systemctl start postgresql
+sudo -u postgres psql -c "CREATE USER ares WITH PASSWORD 'SantaBarbara2026' SUPERUSER;" || true
+sudo -u postgres psql -c "CREATE DATABASE ares_os OWNER ares;" || true
+sudo -u postgres psql -c "CREATE DATABASE ares_artilleria OWNER ares;" || true
+
+# Inicializar esquema logístico
+psql -U ares -d ares_artilleria -f /opt/ares/schema/logistics-schema.sql
+
+# ===== 4. DIRECTORIOS =====
+mkdir -p /opt/ares/{backend,frontend,mcp,schema,logs,data,drev,mumble-web}
+mkdir -p /opt/ares/data/files
+chown -R ares:ares /opt/ares
+
+# ===== 5. BACKEND NODE.JS =====
+cd /opt/ares/backend
+npm ci
+npm run build
+
+cat > /etc/systemd/system/ares-backend.service << 'SYSTEMDEOF'
+[Unit]
+Description=ARES OS Backend API
+After=postgresql.service network.target
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/backend
+ExecStart=/usr/bin/node dist/server.js
+Restart=always
+Environment=NODE_ENV=production
+Environment=DATABASE_URL=postgresql://ares:SantaBarbara2026@localhost/ares_os
+Environment=PROXMOX_HOST=192.168.88.1
+Environment=PROXMOX_USER=root@pam
+[Install]
+WantedBy=multi-user.target
+SYSTEMDEOF
+
+# ===== 6. MCP BALLISTIC SERVER =====
+cat > /etc/systemd/system/ares-ballistic-mcp.service << 'SYSTEMDEOF'
+[Unit]
+Description=ARES Ballistic MCP Master Server
+After=network.target
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/mcp
+ExecStart=/opt/ares/venv/bin/python /opt/ares/mcp/ares_ballistic_mcp_master.py
+Restart=always
+Environment=PYTHONUNBUFFERED=1
+Environment=LATITUD_OPERATIVA=14.08
+[Install]
+WantedBy=multi-user.target
+SYSTEMDEOF
+
+# ===== 7. MCP LOGISTICS SERVER =====
+cat > /etc/systemd/system/ares-logistics-mcp.service << 'SYSTEMDEOF'
+[Unit]
+Description=ARES Logistics MCP Server
+After=postgresql.service
+Requires=postgresql.service
+[Service]
+Type=simple
+User=ares
+WorkingDirectory=/opt/ares/mcp
+ExecStart=/opt/ares/venv/bin/python /opt/ares/mcp/ares_logistics_mcp.py
+Restart=always
+Environment=DB_HOST=localhost
+Environment=DB_NAME=ares_artilleria
+Environment=DB_USER=ares
+Environment=DB_PASS=SantaBarbara2026
+[Install]
+WantedBy=multi-user.target
+SYSTEMDEOF
+
+# ===== 8. MURMUR (MUMBLE) =====
+systemctl enable --now mumble-server
+
+# ===== 9. MUMBLE-WEB =====
+git clone https://github.com/Johni0702/mumble-web.git /opt/ares/mumble-web
+cd /opt/ares/mumble-web
+npm ci && npm run build
+
+# ===== 10. FILEBROWSER =====
+curl -fsSL https://github.com/filebrowser/filebrowser/releases/latest/download/linux-amd64-filebrowser.tar.gz | tar xz -C /usr/local/bin
+
+# ===== 11. GHIDRA =====
+if [ ! -d "/opt/ares/ghidra" ]; then
+  wget -q https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.3_build/ghidra_11.3_PUBLIC_20250408.zip
+  unzip -q ghidra_11.3_PUBLIC_20250408.zip -d /opt/ares/
+  mv /opt/ares/ghidra_11.3_PUBLIC /opt/ares/ghidra
+  rm ghidra_11.3_PUBLIC_20250408.zip
+fi
+git clone https://github.com/Cisco-Talos/Ghidraaas.git /opt/ares/ghidraaas || true
+git clone https://github.com/LaurieWired/GhidraMCP.git /opt/ares/ghidra-mcp || true
+
+# ===== 12. WIREGUARD =====
+wg genkey | tee /etc/wireguard/privatekey | wg pubkey > /etc/wireguard/publickey
+
+# ===== 13. NGINX =====
+mkdir -p /etc/ssl/ares
+openssl req -new -x509 -days 365 -nodes \
+  -out /etc/ssl/ares/ares.crt \
+  -keyout /etc/ssl/ares/ares.key \
+  -subj "/C=HN/ST=Francisco Morazan/L=Tegucigalpa/O=ARES/CN=ares.local"
+
+cat > /etc/nginx/sites-available/ares << 'NGINXEOF'
+server {
+    listen 443 ssl http2;
+    server_name ares.local;
+    ssl_certificate /etc/ssl/ares/ares.crt;
+    ssl_certificate_key /etc/ssl/ares/ares.key;
+    client_max_body_size 100M;
+
+    # Frontend React
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # Backend API
+    location /api/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # WebSocket para comunicaciones
+    location /ws/ {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    # FileBrowser
+    location /files/ {
+        proxy_pass http://127.0.0.1:8082;
+    }
+
+    # Netdata
+    location /netdata/ {
+        proxy_pass http://127.0.0.1:19999;
+    }
+
+    # Mumble-web
+    location /comms/ {
+        alias /opt/ares/mumble-web/dist/;
+        try_files $uri /comms/index.html;
+    }
+
+    # Code Server
+    location /code/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+
+    # Terminal wetty
+    location /wetty/ {
+        proxy_pass http://127.0.0.1:3002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+NGINXEOF
+
+ln -sf /etc/nginx/sites-available/ares /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+systemctl restart nginx
+
+# ===== 14. ACTIVAR SERVICIOS =====
+systemctl daemon-reload
+systemctl enable --now ares-backend ares-ballistic-mcp ares-logistics-mcp
+
+# ===== 15. rclone =====
+rclone config create s3 s3 provider=Minio endpoint=http://192.168.88.1:9000 || true
+
+echo ""
+echo "╔══════════════════════════════════════════════════════════════╗"
+echo "║  ✅ ARES OS v2.6 INSTALADO                                   ║"
+echo "║                                                              ║"
+echo "║  Acceso: https://ares.local                                  ║"
+echo "║  Root: Santa Barbara                                         ║"
+echo "║  Gateway: 192.168.88.1                                       ║"
+echo "║  DNS: 1.1.1.1                                                ║"
+echo "║                                                              ║"
+echo "║  MCP Servers:                                                ║"
+echo "║  • Balístico:  ares-ballistic-mcp (stdio)                    ║"
+echo "║  • Logística:  ares-logistics-mcp (stdio)                    ║"
+echo "║                                                              ║"
+echo "║  Servicios:                                                  ║"
+echo "║  • PostgreSQL:   localhost:5432                              ║"
+echo "║  • Murmur PTT:   ares.local:64738                            ║"
+echo "║  • FileBrowser:  /files/                                     ║"
+echo "║  • Netdata:      /netdata/                                   ║"
+echo "║  • VS Code:      /code/                                      ║"
+echo "║  • Terminal:     /wetty/                                     ║"
+echo "║  • Mumble-web:   /comms/                                     ║"
+echo "╚══════════════════════════════════════════════════════════════╝"

@@ -1,0 +1,739 @@
+ARES OS 
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARES OS v2.6 — Santa Barbara</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/zustand@4/umd/vanilla.production.min.js"></script>
+<script src="https://unpkg.com/zustand@4/umd/react.production.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+<style>
+:root {
+  --ares-bg: #0d1117; --ares-panel: rgba(22,27,34,0.92); --ares-primary: #2dd4bf;
+  --ares-text: #e6edf3; --ares-text-dim: #8b949e; --ares-border: #2d333b;
+}
+body { margin:0; padding:0; overflow:hidden; background:#000; font-family:'Inter',sans-serif; }
+.scanlines { position:fixed; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.06) 3px); pointer-events:none; z-index:9999; }
+.window-frame { position:absolute; background:var(--ares-panel); backdrop-filter:blur(16px); border:1px solid var(--ares-border); border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,.6); display:flex; flex-direction:column; min-width:300px; min-height:200px; }
+.window-header { display:flex; align-items:center; padding:0 12px; height:40px; background:rgba(255,255,255,.03); border-bottom:1px solid var(--ares-border); border-radius:12px 12px 0 0; cursor:move; }
+.window-title { font-family:'Rajdhani',sans-serif; font-weight:600; font-size:14px; color:var(--ares-text); flex:1; text-transform:uppercase; letter-spacing:1px; }
+.window-controls { display:flex; gap:6px; margin-left:8px; }
+.window-btn { width:12px; height:12px; border-radius:50%; border:none; cursor:pointer; transition:.2s; }
+.window-btn.close { background:#ef4444; } .window-btn.close:hover { background:#dc2626; }
+.window-btn.min { background:#f59e0b; } .window-btn.min:hover { background:#d97706; }
+.window-btn.max { background:#22c55e; } .window-btn.max:hover { background:#16a34a; }
+.window-body { flex:1; overflow:auto; position:relative; }
+.taskbar { position:fixed; bottom:0; left:0; right:0; height:48px; background:var(--ares-panel); backdrop-filter:blur(16px); border-top:1px solid var(--ares-border); display:flex; align-items:center; padding:0 12px; z-index:100; }
+.taskbar-center { display:flex; gap:4px; flex:1; justify-content:center; align-items:center; }
+.taskbar-icon { width:40px; height:40px; display:flex; align-items:center; justify-content:center; border-radius:8px; cursor:pointer; transition:.2s; color:var(--ares-text-dim); }
+.taskbar-icon:hover { background:rgba(255,255,255,.08); color:var(--ares-text); }
+.taskbar-icon.active { background:rgba(45,212,191,.15); color:var(--ares-primary); }
+.taskbar-icon.minimized { opacity:.5; }
+.taskbar-right { display:flex; gap:12px; align-items:center; font-size:12px; color:var(--ares-text-dim); }
+.start-menu { position:fixed; bottom:54px; left:12px; width:480px; background:var(--ares-panel); backdrop-filter:blur(20px); border:1px solid var(--ares-border); border-radius:12px; box-shadow:0 16px 48px rgba(0,0,0,.7); z-index:90; padding:8px; display:none; }
+.start-menu.open { display:block; }
+.start-search { padding:8px 12px; background:rgba(255,255,255,.05); border:1px solid var(--ares-border); border-radius:8px; color:var(--ares-text); width:100%; margin-bottom:8px; outline:none; }
+.start-app-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; }
+.start-app-item { display:flex; flex-direction:column; align-items:center; padding:8px 4px; border-radius:8px; cursor:pointer; transition:.2s; color:var(--ares-text-dim); font-size:11px; text-align:center; }
+.start-app-item:hover { background:rgba(255,255,255,.08); color:var(--ares-text); }
+.start-app-item .app-icon { font-size:24px; margin-bottom:4px; }
+.login-container { position:fixed; inset:0; background:#000; display:flex; flex-direction:column; align-items:center; justify-content:center; z-index:200; }
+.login-terminal { font-family:'JetBrains Mono',monospace; font-size:13px; color:#2dd4bf; width:600px; max-height:300px; overflow:hidden; margin-bottom:30px; }
+.login-panel { background:var(--ares-panel); border:1px solid var(--ares-border); border-radius:12px; padding:30px; width:400px; text-align:center; }
+.login-panel input { width:100%; padding:10px; margin:8px 0; background:rgba(255,255,255,.05); border:1px solid var(--ares-border); border-radius:8px; color:var(--ares-text); outline:none; }
+.login-panel select { width:100%; padding:10px; margin:8px 0; background:rgba(255,255,255,.05); border:1px solid var(--ares-border); border-radius:8px; color:var(--ares-text); }
+.login-btn { width:100%; padding:12px; background:var(--ares-primary); border:none; border-radius:8px; color:#000; font-weight:700; cursor:pointer; margin-top:12px; font-family:'Rajdhani',sans-serif; font-size:16px; letter-spacing:2px; text-transform:uppercase; }
+.toast { position:fixed; top:60px; right:20px; background:var(--ares-panel); border:1px solid var(--ares-border); border-radius:8px; padding:12px 16px; z-index:150; animation:slideIn .3s; }
+@keyframes slideIn { from { opacity:0; transform:translateX(100px); } to { opacity:1; transform:translateX(0); } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div class="scanlines"></div>
+
+<script type="text/babel">
+const { createRoot } = ReactDOM;
+const { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } = React;
+const { create } = zustand;
+
+// ==================== ZUSTAND OS STORE ====================
+const useOSStore = create((set, get) => ({
+  // Auth
+  isAuthenticated: false,
+  user: null,
+  // Windows
+  windows: [],
+  activeWindowId: null,
+  nextZIndex: 100,
+  // Desktop
+  showStartMenu: false,
+  // Network
+  networkStatus: 'online',
+  vpnStatus: 'disconnected',
+  proxmoxStatus: 'online',
+  // Actions
+  login: (user) => set({ isAuthenticated: true, user }),
+  logout: () => set({ isAuthenticated: false, user: null, windows: [] }),
+  openWindow: (appId, extra = {}) => {
+    const state = get();
+    const existing = state.windows.find(w => w.appId === appId && !w.minimized);
+    if (existing && !extra.forceNew) {
+      set({ activeWindowId: existing.id, windows: state.windows.map(w => w.id === existing.id ? { ...w, minimized: false } : w) });
+      return;
+    }
+    const id = 'win-' + Date.now();
+    const win = { id, appId, title: extra.title || appId, minimized: false, maximized: false,
+      x: extra.x || 50 + state.windows.length * 30, y: extra.y || 50 + state.windows.length * 30,
+      width: extra.width || 800, height: extra.height || 600, zIndex: state.nextZIndex };
+    set({ windows: [...state.windows, win], activeWindowId: id, nextZIndex: state.nextZIndex + 1 });
+  },
+  closeWindow: (id) => set(s => ({ windows: s.windows.filter(w => w.id !== id), activeWindowId: s.activeWindowId === id ? null : s.activeWindowId })),
+  minimizeWindow: (id) => set(s => ({ windows: s.windows.map(w => w.id === id ? { ...w, minimized: true } : w), activeWindowId: s.activeWindowId === id ? null : s.activeWindowId })),
+  maximizeWindow: (id) => set(s => ({ windows: s.windows.map(w => w.id === id ? { ...w, maximized: !w.maximized } : w) })),
+  focusWindow: (id) => set(s => ({ activeWindowId: id, windows: s.windows.map(w => w.id === id ? { ...w, zIndex: s.nextZIndex, minimized: false } : w), nextZIndex: s.nextZIndex + 1 })),
+  toggleStartMenu: () => set(s => ({ showStartMenu: !s.showStartMenu })),
+}));
+
+// ==================== APP REGISTRY ====================
+const APP_ICONS = {
+  terminal: '⬛', files: '📁', settings: '⚙️', 'system-monitor': '📊',
+  'drev-lab': '🎯', 'drev-3d': '🧊', 'firing-tables': '📋', 'genesyx': '🧠',
+  'santa-barbara': '📡', 'mumble-ptt': '🎙️', 'tactical-chat': '💬',
+  logistics: '🚛', inventory: '📦', personnel: '👥',
+  'code-server': '💻', ghidra: '🐛', hoppscotch: '📨',
+  proxmox: '🖥️', firewall: '🛡️', vpn: '🔒',
+  'text-editor': '📝', calculator: '🔢', calendar: '📅', notes: '🗒️', browser: '🌐',
+  'manual-viewer': '📘', 'report-generator': '📊', converter: '🔄'
+};
+const APP_CATEGORIES = {
+  system: ['terminal','files','settings','system-monitor'],
+  ballistics: ['drev-lab','drev-3d','firing-tables','genesyx'],
+  communications: ['santa-barbara','mumble-ptt','tactical-chat'],
+  logistics: ['logistics','inventory','personnel'],
+  development: ['code-server','ghidra','hoppscotch'],
+  security: ['proxmox','firewall','vpn'],
+  productivity: ['text-editor','calculator','calendar','notes','browser'],
+  utilities: ['manual-viewer','report-generator','converter']
+};
+
+// ==================== PHYSICS ENGINE (JS) ====================
+const PhysicsEngine = {
+  G0: 9.80665, R_AIR: 287.05, GAMMA: 1.4, OMEGA: 7.2921159e-5, RADIO_T: 6371000,
+  LAT: 14.08 * Math.PI / 180,
+  G7_TABLE: [[0,0.12],[0.7,0.122],[0.85,0.135],[0.95,0.2],[1,0.35],[1.05,0.38],[1.1,0.375],[1.2,0.355],[1.5,0.31],[2,0.26],[3,0.19],[5,0.15]],
+  atmosfera(h) {
+    if (h <= 11000) { let T = 288.15 - 0.0065*h; let P = 101325 * Math.pow(T/288.15, 5.256); return [P/(this.R_AIR*T), T]; }
+    else { let P = 22632 * Math.exp(-this.G0*(h-11000)/(this.R_AIR*216.65)); return [P/(this.R_AIR*216.65), 216.65]; }
+  },
+  gravedad(h) { return this.G0 * Math.pow(this.RADIO_T/(this.RADIO_T+h), 2); },
+  g7cd(mach) {
+    let t = this.G7_TABLE;
+    if (mach <= t[0][0]) return t[0][1];
+    if (mach >= t[t.length-1][0]) return t[t.length-1][1];
+    for (let i = 0; i < t.length-1; i++) {
+      if (mach >= t[i][0] && mach <= t[i+1][0]) {
+        let f = (mach - t[i][0]) / (t[i+1][0] - t[i][0]);
+        return t[i][1] + f * (t[i+1][1] - t[i][1]);
+      }
+    }
+    return 0.25;
+  },
+  simulate(proj, qeMils, vzW = 0) {
+    let theta = qeMils * 0.001;
+    let v0 = proj.v0;
+    let x = 0, y = 0.5, z = 0, vx = v0*Math.cos(theta), vy = v0*Math.sin(theta), vz = 0;
+    let dt = 0.05, t = 0, maxY = 0, points = [];
+    while (y >= 0 && t < 300) {
+      let [rho, temp] = this.atmosfera(y);
+      let vr = Math.sqrt(vx**2 + vy**2 + (vz-vzW)**2) || 1e-6;
+      let mach = vr / Math.sqrt(this.GAMMA * this.R_AIR * temp);
+      let cd = this.g7cd(mach);
+      let area = Math.PI * (proj.caliber/2000)**2;
+      let kDrag = 0.5 * rho * cd * area / proj.mass;
+      let g = this.gravedad(y);
+      let corX = 2*this.OMEGA*(vy*Math.sin(this.LAT) - vz*Math.cos(this.LAT));
+      let corY = -2*this.OMEGA*vx*Math.sin(this.LAT);
+      let corZ = 2*this.OMEGA*vx*Math.cos(this.LAT);
+      let ax = -kDrag*vr*vx + corX, ay = -kDrag*vr*vy - g + corY, az = -kDrag*vr*(vz-vzW) + corZ;
+      x += vx*dt; y += vy*dt; z += vz*dt; vx += ax*dt; vy += ay*dt; vz += az*dt; t += dt;
+      if (y > maxY) maxY = y;
+      if (Math.floor(t*10) % 5 === 0) points.push({t: +t.toFixed(2), x: +x.toFixed(1), y: +y.toFixed(1), z: +z.toFixed(2), v: +Math.sqrt(vx**2+vy**2+vz**2).toFixed(1) });
+    }
+    if (y < 0) { let frac = -y/vy; x += vx*frac; z += vz*frac; t -= dt-frac; }
+    return { range: x, deflection: z, time: t, maxAlt: maxY, points };
+  },
+  inverse(proj, targetRange, tol = 1) {
+    let lo = 50, hi = 1600;
+    for (let i = 0; i < 60; i++) {
+      let mid = (lo+hi)/2;
+      let r = this.simulate(proj, mid).range;
+      if (Math.abs(r - targetRange) < tol) return mid;
+      if (r < targetRange) lo = mid; else hi = mid;
+    }
+    return (lo+hi)/2;
+  }
+};
+
+// ==================== MUNITIONS DB ====================
+const MUNITIONS_DB = {
+  "155_HE_M107": { name: "155mm HE M107", caliber: 155, mass: 43.2, v0: 563, bc: 0.185, drag: "G7", charges: { "WB M4A2": 563, "WB M119A2": 685, "RB M203": 827 } },
+  "155_HERA_M549A1": { name: "155mm HERA M549A1", caliber: 155, mass: 43.5, v0: 600, bc: 0.21, drag: "G7", charges: { "WB M4A2": 600, "WB M119A2": 685, "RB M203": 827 } },
+  "155_ILLUM_M485": { name: "155mm ILLUM M485", caliber: 155, mass: 45.4, v0: 630, bc: 0.165, drag: "G7", charges: { "WB M4A2": 563, "WB M119A2": 685 } },
+  "105_HE_M1": { name: "105mm HE M1", caliber: 105, mass: 14.97, v0: 494, bc: 0.15, drag: "G7", charges: { "M67 Ch7": 472 } },
+};
+const BATTALIONS = [
+  { id:1, name:"1er Batallón de Artillería de Campaña", location:"Zambrano", dept:"Francisco Morazán" },
+  { id:2, name:"2do Batallón de Artillería de Campaña", location:"Pinalejo", dept:"Santa Bárbara" },
+  { id:4, name:"4to Batallón de Artillería de Campaña", location:"Choluteca", dept:"Francisco Morazán" },
+];
+
+// ==================== TERMINAL APP ====================
+function TerminalApp({ winId }) {
+  const [output, setOutput] = useState([
+    { text: 'ARES TERMINAL v2.6 — Santa Barbara Root Shell', color: '#2dd4bf' },
+    { text: 'Escribe "help" para comandos disponibles.', color: '#8b949e' },
+  ]);
+  const [input, setInput] = useState('');
+  const [history, setHistory] = useState([]);
+  const [histIdx, setHistIdx] = useState(-1);
+  const outRef = useRef(null);
+
+  useEffect(() => { outRef.current?.scrollTo(0, outRef.current.scrollHeight); }, [output]);
+
+  const execute = (cmd) => {
+    const args = cmd.trim().split(/\s+/);
+    const c = args[0]?.toLowerCase();
+    let result = '';
+    if (c === 'help') result = 'Comandos: help, clear, date, whoami, ls, pwd, cat, drev [proy] [carga] [rango], status, proxmox, net, calc [expr], echo [text]';
+    else if (c === 'clear') { setOutput([]); return; }
+    else if (c === 'date') result = new Date().toISOString();
+    else if (c === 'whoami') result = 'Santa Barbara (root)';
+    else if (c === 'ls') result = 'home/  etc/  opt/  var/  mnt/  tmp/';
+    else if (c === 'pwd') result = '/home/santa-barbara';
+    else if (c === 'cat' && args[1]) result = `[Contenido de ${args[1]} simulado]`;
+    else if (c === 'status') result = 'ARES OS v2.6 | Kernel: Linux 6.8.0-ares | Uptime: 3h 42m | CPU: 12% | RAM: 4.2/16GB | Proxmox GW: 192.168.88.1 | VPN: WireGuard Active | DNS: 1.1.1.1';
+    else if (c === 'proxmox') result = 'Clúster Proxmox 192.168.88.1: 3 nodos online (pve1, pve2, pve3), 12 VMs activas';
+    else if (c === 'net') result = 'eth0: 192.168.88.10/24 | GW: 192.168.88.1 | DNS: 1.1.1.1 | wg0: 10.0.0.1/24';
+    else if (c === 'drev' && args[1]) {
+      let proj = MUNITIONS_DB[args[1]];
+      if (!proj) result = 'Proyectil no encontrado. Use: 155_HE_M107, 155_HERA_M549A1, 105_HE_M1';
+      else {
+        let carga = args[2] || Object.keys(proj.charges)[0];
+        let rango = parseFloat(args[3]) || 10000;
+        if (!proj.charges[carga]) carga = Object.keys(proj.charges)[0];
+        let p = { ...proj, v0: proj.charges[carga] };
+        let sim = PhysicsEngine.simulate(p, PhysicsEngine.inverse(p, rango));
+        result = `DREV: ${proj.name} + ${carga} | QE: ${PhysicsEngine.inverse(p,rango).toFixed(1)} mils | Alcance: ${sim.range.toFixed(0)}m | TOF: ${sim.time.toFixed(1)}s | Deriva: ${sim.deflection.toFixed(2)}m`;
+      }
+    } else if (c === 'calc' && args[1]) {
+      try { result = eval(args.slice(1).join(' ')).toString(); } catch { result = 'Error'; }
+    } else if (c === 'echo') result = args.slice(1).join(' ');
+    else if (c) result = `Comando "${c}" no reconocido. Escribe "help" para ayuda.`;
+    setOutput(prev => [...prev, { text: `root@ares:~$ ${cmd}`, color: '#2dd4bf' }, ...(result ? [{ text: result, color: '#e6edf3' }] : [])]);
+    if (cmd.trim()) setHistory(prev => [...prev, cmd.trim()]);
+    setHistIdx(-1);
+  };
+
+  const handleKey = (e) => {
+    if (e.key === 'Enter') { execute(input); setInput(''); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); let idx = histIdx === -1 ? history.length-1 : Math.max(0, histIdx-1); setHistIdx(idx); setInput(history[idx] || ''); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); let idx = histIdx === -1 ? -1 : Math.min(history.length-1, histIdx+1); setHistIdx(idx); setInput(idx === -1 ? '' : history[idx] || ''); }
+  };
+
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] flex flex-col font-mono text-sm' },
+    React.createElement('div', { ref: outRef, className: 'flex-1 overflow-auto p-3' },
+      output.map((line, i) => React.createElement('div', { key: i, style: { color: line.color, fontSize: '12px', lineHeight: '1.6' } }, line.text))
+    ),
+    React.createElement('div', { className: 'flex items-center p-2 border-t border-[#2d333b]' },
+      React.createElement('span', { className: 'text-[#2dd4bf] mr-2', style: { fontSize: '12px' } }, 'root@ares:~$'),
+      React.createElement('input', { value: input, onChange: e => setInput(e.target.value), onKeyDown: handleKey, className: 'flex-1 bg-transparent outline-none text-[#e6edf3]', style: { fontSize: '12px', fontFamily: '"JetBrains Mono", monospace' }, spellCheck: false, autoFocus: true })
+    )
+  );
+}
+
+// ==================== DREV LAB APP ====================
+function DrevLabApp() {
+  const [projId, setProjId] = useState('155_HE_M107');
+  const [chargeId, setChargeId] = useState('WB M4A2');
+  const [range, setRange] = useState(10000);
+  const [result, setResult] = useState(null);
+  const [chartData, setChartData] = useState(null);
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    let proj = MUNITIONS_DB[projId];
+    if (proj) setChargeId(Object.keys(proj.charges)[0]);
+  }, [projId]);
+
+  const calculate = () => {
+    let proj = MUNITIONS_DB[projId];
+    if (!proj) return;
+    let p = { ...proj, v0: proj.charges[chargeId] || proj.v0 };
+    let qe = PhysicsEngine.inverse(p, range);
+    let sim = PhysicsEngine.simulate(p, qe);
+    setResult({ qe: qe.toFixed(1), range: sim.range.toFixed(0), time: sim.time.toFixed(1), deflection: sim.deflection.toFixed(2), maxAlt: sim.maxAlt.toFixed(1) });
+    setChartData(sim.points);
+  };
+
+  useEffect(() => {
+    if (chartData && canvasRef.current) {
+      if (chartRef.current) chartRef.current.destroy();
+      chartRef.current = new Chart(canvasRef.current, {
+        type: 'line',
+        data: { labels: chartData.map(p => p.x), datasets: [{ label: 'Trayectoria', data: chartData.map(p => p.y), borderColor: '#2dd4bf', backgroundColor: 'rgba(45,212,191,0.1)', fill: true, tension: 0.3, pointRadius: 0 }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { title: { display: true, text: 'Alcance (m)', color: '#8b949e' }, ticks: { color: '#8b949e' }, grid: { color: '#2d333b' } }, y: { title: { display: true, text: 'Altura (m)', color: '#8b949e' }, ticks: { color: '#8b949e' }, grid: { color: '#2d333b' } } } }
+      });
+    }
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [chartData]);
+
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] text-[#e6edf3] flex' },
+    React.createElement('div', { className: 'w-72 p-4 border-r border-[#2d333b] space-y-3' },
+      React.createElement('h3', { className: 'text-[#2dd4bf] font-rajdhani text-lg font-bold uppercase tracking-wider' }, 'DREV LAB'),
+      React.createElement('label', { className: 'text-xs text-[#8b949e] block' }, 'Proyectil'),
+      React.createElement('select', { value: projId, onChange: e => setProjId(e.target.value), className: 'w-full bg-[#161b22] border border-[#2d333b] rounded p-2 text-sm text-white' },
+        Object.keys(MUNITIONS_DB).map(k => React.createElement('option', { key: k, value: k }, MUNITIONS_DB[k].name))
+      ),
+      React.createElement('label', { className: 'text-xs text-[#8b949e] block' }, 'Carga'),
+      React.createElement('select', { value: chargeId, onChange: e => setChargeId(e.target.value), className: 'w-full bg-[#161b22] border border-[#2d333b] rounded p-2 text-sm text-white' },
+        Object.keys(MUNITIONS_DB[projId]?.charges || {}).map(k => React.createElement('option', { key: k, value: k }, `${k} (${MUNITIONS_DB[projId].charges[k]} m/s)`))
+      ),
+      React.createElement('label', { className: 'text-xs text-[#8b949e] block' }, 'Alcance objetivo (m)'),
+      React.createElement('input', { type: 'number', value: range, onChange: e => setRange(e.target.value), className: 'w-full bg-[#161b22] border border-[#2d333b] rounded p-2 text-sm text-white' }),
+      React.createElement('button', { onClick: calculate, className: 'w-full py-3 bg-[#2dd4bf] text-black font-bold rounded-lg uppercase tracking-wider font-rajdhani' }, 'EVALUAR'),
+      result && React.createElement('div', { className: 'space-y-1 mt-3 p-3 bg-[#161b22] rounded-lg text-xs' },
+        React.createElement('div', null, React.createElement('span', { className: 'text-[#8b949e]' }, 'QE: '), React.createElement('span', { className: 'text-[#2dd4bf] font-bold' }, result.qe, ' mils')),
+        React.createElement('div', null, React.createElement('span', { className: 'text-[#8b949e]' }, 'Alcance: '), React.createElement('span', { className: 'text-white' }, result.range, ' m')),
+        React.createElement('div', null, React.createElement('span', { className: 'text-[#8b949e]' }, 'TOF: '), React.createElement('span', { className: 'text-white' }, result.time, ' s')),
+        React.createElement('div', null, React.createElement('span', { className: 'text-[#8b949e]' }, 'Deriva: '), React.createElement('span', { className: 'text-white' }, result.deflection, ' m')),
+        React.createElement('div', null, React.createElement('span', { className: 'text-[#8b949e]' }, 'Ord. Máx: '), React.createElement('span', { className: 'text-white' }, result.maxAlt, ' m'))
+      )
+    ),
+    React.createElement('div', { className: 'flex-1 p-4' },
+      React.createElement('div', { className: 'h-full relative' },
+        React.createElement('canvas', { ref: canvasRef })
+      )
+    )
+  );
+}
+
+// ==================== SANTA BARBARA COMMS APP ====================
+function SantaBarbaraApp() {
+  const [role, setRole] = useState('cp');
+  const [messages, setMessages] = useState([
+    { time: '12:00:00Z', type: 'sys', src: 'SYS', msg: 'SANTA BÁRBARA — SISTEMA INTEROPERABLE v2.0' },
+    { time: '12:00:01Z', type: 'sys', src: 'SYS', msg: 'Red inicializada — 6 nodos activos. Protocolo EDXL-CAP activo.' },
+  ]);
+  const [missions, setMissions] = useState([]);
+  const [newMsg, setNewMsg] = useState('');
+  const [jamming, setJamming] = useState(false);
+  const termRef = useRef(null);
+
+  useEffect(() => {
+    const jam = setInterval(() => { if (Math.random() > 0.9) setJamming(prev => !prev); }, 15000);
+    return () => clearInterval(jam);
+  }, []);
+
+  useEffect(() => { termRef.current?.scrollTo(0, termRef.current.scrollHeight); }, [messages]);
+
+  const addMsg = (type, src, msg) => {
+    const time = new Date().toISOString().split('T')[1].split('.')[0] + 'Z';
+    setMessages(prev => [...prev.slice(-100), { time, type, src, msg }]);
+  };
+
+  const sendMsg = () => {
+    if (!newMsg.trim()) return;
+    addMsg(role, role.toUpperCase(), '📤 ' + newMsg);
+    setTimeout(() => { const replies = ['ACK','COPY','ROGER','WILCO']; addMsg('sys','DEST','📥 '+replies[Math.floor(Math.random()*replies.length)]); }, 500+Math.random()*1000);
+    setNewMsg('');
+  };
+
+  const requestFire = () => {
+    if (role !== 'fo') { addMsg('warn','SYS','ACCESO DENEGADO: Solo FO puede designar objetivos'); return; }
+    const id = 'FM-'+Math.floor(Math.random()*9000+1000);
+    const grid = 'NK '+Math.floor(Math.random()*500+400)+' '+Math.floor(Math.random()*500+700);
+    const m = { id, target: grid, rounds: 3, status: 'PENDING' };
+    setMissions(prev => [...prev, m]);
+    addMsg('fo','COBRA-11',`🎯 OBJETIVO DESIGNADO: ${grid} — Solicitando fuego`);
+  };
+
+  const approve = (id) => {
+    setMissions(prev => prev.map(m => m.id===id ? {...m, status:'APPROVED'} : m));
+    addMsg('cp','EAGLE-06',`MISIÓN ${id} APROBADA`);
+    setTimeout(() => {
+      setMissions(prev => prev.map(m => m.id===id ? {...m, status:'EXECUTING'} : m));
+      addMsg('bat','THUNDER-01',`🔥 FUEGO EN CURSO → ${missions.find(m=>m.id===id)?.target}`);
+      setTimeout(() => {
+        setMissions(prev => prev.map(m => m.id===id ? {...m, status:'COMPLETE'} : m));
+        addMsg('sys','SYS',`✅ MISIÓN ${id} COMPLETADA`);
+      }, 3000);
+    }, 1000);
+  };
+
+  return React.createElement('div', { className: 'h-full bg-[#060a0f] text-[#e2e8f0] flex flex-col' },
+    React.createElement('header', { className: 'flex items-center justify-between px-3 py-2 bg-[#0b1019] border-b border-[#1a2435]' },
+      React.createElement('div', { className: 'flex items-center gap-3' },
+        React.createElement('span', { className: 'text-[#00e5a0] font-mono font-black text-lg tracking-widest', style:{textShadow:'0 0 15px rgba(0,229,160,.4)'} }, 'SANTA BÁRBARA'),
+        React.createElement('span', { className: `px-2 py-1 rounded-full text-xs font-bold ${jamming?'bg-[#ff2d5515] text-[#ff2d55]':'bg-[#00e5a015] text-[#00e5a0]'}` }, jamming?'INTERFERENCIA':'RED ACTIVA')
+      ),
+      React.createElement('select', { value: role, onChange: e => setRole(e.target.value), className: 'bg-[#0f1522] border border-[#1a2435] rounded px-2 py-1 text-xs' },
+        React.createElement('option', { value: 'cp' }, 'CP'), React.createElement('option', { value: 'fo' }, 'FO'), React.createElement('option', { value: 'bat' }, 'Batería'), React.createElement('option', { value: 'log' }, 'Logística')
+      )
+    ),
+    React.createElement('main', { className: 'flex-1 grid grid-cols-[1fr_320px]' },
+      React.createElement('div', { className: 'relative cursor-crosshair p-2' },
+        React.createElement('div', { className: 'absolute inset-2', style: { backgroundImage: 'linear-gradient(rgba(26,36,53,.5) 1px, transparent 1px), linear-gradient(90deg, rgba(26,36,53,.5) 1px, transparent 1px)', backgroundSize: '50px 50px' }, onClick: requestFire }),
+        React.createElement('div', { className: 'absolute top-3 left-3 font-mono text-[11px] text-[#64748b] bg-black/70 px-2 py-1 rounded z-10' }, 'SECTOR NK | ZONA ALPHA'),
+        missions.filter(m=>m.status!=='REJECTED').map(m => React.createElement('div', { key: m.id, className: 'absolute -translate-x-1/2 -translate-y-1/2 z-10', style:{left:30+Math.random()*40+'%',top:30+Math.random()*40+'%'} },
+          React.createElement('div', { className: `w-3 h-3 rounded-full mx-auto ${m.status==='COMPLETE'?'bg-[#00e5a0]':m.status==='EXECUTING'?'bg-[#ffb300] animate-pulse':'bg-[#ff2d55]'}` }),
+          React.createElement('span', { className: 'text-[8px] text-[#ff2d55] font-mono' }, m.target)
+        )),
+        React.createElement('div', { className: 'absolute bottom-4 left-4 right-4 flex gap-2 overflow-x-auto' },
+          missions.slice(-4).reverse().map(m => React.createElement('div', { key: m.id, className: 'p-2 rounded bg-[#0b1019] border border-[#1a2435] text-xs min-w-[150px]' },
+            React.createElement('div', { className: 'font-bold' }, m.id), React.createElement('div', { className: 'text-[#00e5a0] font-mono' }, m.target),
+            m.status === 'PENDING' && React.createElement('button', { onClick: () => approve(m.id), className: 'mt-1 px-2 py-1 bg-[#00e5a0] text-black rounded text-[10px] font-bold' }, 'APROBAR'),
+            m.status === 'COMPLETE' && React.createElement('span', { className: 'text-[10px] text-[#00e5a0]' }, '✅ COMPLETADA'),
+            m.status === 'EXECUTING' && React.createElement('span', { className: 'text-[10px] text-[#ffb300] animate-pulse' }, '🔥 EJECUTANDO')
+          ))
+        )
+      ),
+      React.createElement('div', { className: 'bg-[#0b1019] border-l border-[#1a2435] flex flex-col' },
+        React.createElement('div', { className: 'p-2 text-xs font-bold text-[#64748b] uppercase border-b border-[#1a2435]' }, '📟 Terminal Segura'),
+        React.createElement('div', { ref: termRef, className: 'flex-1 overflow-auto p-2 font-mono text-xs space-y-1' },
+          messages.map((msg, i) => React.createElement('div', { key: i, className: 'flex gap-2' },
+            React.createElement('span', { className: 'text-[#64748b]' }, `[${msg.time}]`),
+            React.createElement('span', { className: `font-bold ${msg.type==='sys'?'text-[#00aaff]':msg.type==='fo'?'text-[#00aaff]':msg.type==='bat'?'text-[#ffb300]':msg.type==='cp'?'text-[#00e5a0]':'text-[#ff2d55]'}` }, `[${msg.src}]`),
+            React.createElement('span', { className: msg.type==='crit'?'text-[#ff2d55]':'' }, msg.msg)
+          ))
+        ),
+        React.createElement('div', { className: 'p-2 border-t border-[#1a2435] flex gap-2' },
+          React.createElement('input', { value: newMsg, onChange: e => setNewMsg(e.target.value), onKeyPress: e => e.key==='Enter'&&sendMsg(), placeholder: 'Mensaje...', className: 'flex-1 bg-[#060a0f] border border-[#1a2435] rounded px-2 py-2 text-xs font-mono text-[#00e5a0] outline-none' }),
+          React.createElement('button', { onClick: sendMsg, className: 'px-3 py-2 bg-[#00e5a0] text-black rounded text-xs font-bold' }, 'ENV')
+        )
+      )
+    )
+  );
+}
+
+// ==================== LOGISTICS APP ====================
+function LogisticsApp() {
+  const [selectedBat, setSelectedBat] = useState(1);
+  const inventory = [
+    { type: 'HE M107', caliber: 155, qty: 1420, min: 500, lot: 'LOT-2026-03' },
+    { type: 'HERA M549A1', caliber: 155, qty: 380, min: 100, lot: 'LOT-2026-01' },
+    { type: 'ILLUM M485', caliber: 155, qty: 210, min: 80, lot: 'LOT-2025-11' },
+    { type: 'SMOKE HC', caliber: 155, qty: 450, min: 150, lot: 'LOT-2026-02' },
+    { type: 'HE M1', caliber: 105, qty: 890, min: 300, lot: 'LOT-2025-09' },
+  ];
+  const personnel = [
+    { name: 'Cnel. Ramírez', grade: 'Coronel', role: 'Comandante' },
+    { name: 'Tte. Cnel. López', grade: 'Teniente Coronel', role: 'Oficial Enlace' },
+    { name: 'Sgto. Mayor García', grade: 'Sargento Mayor', role: 'Jefe de Pieza' },
+    { name: 'Cbo. Martínez', grade: 'Cabo', role: 'Artillero' },
+  ];
+  const obuses = [
+    { model: 'M198', caliber: 155, serial: 'M198-0452', status: 'operativo' },
+    { model: 'M198', caliber: 155, serial: 'M198-0518', status: 'operativo' },
+    { model: 'M198', caliber: 155, serial: 'M198-0633', status: 'mantenimiento' },
+    { model: 'M102', caliber: 105, serial: 'M102-0112', status: 'operativo' },
+  ];
+
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] text-[#e6edf3] flex flex-col' },
+    React.createElement('div', { className: 'flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#2d333b]' },
+      React.createElement('h2', { className: 'text-[#2dd4bf] font-rajdhani text-lg font-bold uppercase tracking-widest' }, '🏗️ LOGÍSTICA DE ARTILLERÍA'),
+      React.createElement('select', { value: selectedBat, onChange: e => setSelectedBat(+e.target.value), className: 'bg-[#0d1117] border border-[#2d333b] rounded px-3 py-1 text-sm' },
+        BATTALIONS.map(b => React.createElement('option', { key: b.id, value: b.id }, b.name))
+      )
+    ),
+    React.createElement('div', { className: 'flex-1 grid grid-cols-3 gap-3 p-4' },
+      React.createElement('div', { className: 'bg-[#161b22] rounded-xl p-4 border border-[#2d333b]' },
+        React.createElement('h3', { className: 'text-xs font-bold text-[#8b949e] uppercase mb-3' }, '👥 Personal Activo'),
+        personnel.map((p,i) => React.createElement('div', { key: i, className: 'py-2 border-b border-[#2d333b] text-xs' },
+          React.createElement('div', { className: 'font-semibold' }, p.name), React.createElement('div', { className: 'text-[#8b949e]' }, p.grade + ' — ' + p.role))
+        )
+      ),
+      React.createElement('div', { className: 'bg-[#161b22] rounded-xl p-4 border border-[#2d333b]' },
+        React.createElement('h3', { className: 'text-xs font-bold text-[#8b949e] uppercase mb-3' }, '🔫 Obuses'),
+        obuses.map((o,i) => React.createElement('div', { key: i, className: 'py-2 border-b border-[#2d333b] flex justify-between items-center text-xs' },
+          React.createElement('span', null, o.model + ' (' + o.serial + ')'),
+          React.createElement('span', { className: `px-2 py-0.5 rounded text-[10px] font-bold ${o.status==='operativo'?'bg-[#2dd4bf20] text-[#2dd4bf]':'bg-[#f59e0b20] text-[#f59e0b]'}` }, o.status.toUpperCase()))
+        )
+      ),
+      React.createElement('div', { className: 'bg-[#161b22] rounded-xl p-4 border border-[#2d333b]' },
+        React.createElement('h3', { className: 'text-xs font-bold text-[#8b949e] uppercase mb-3' }, '💣 Inventario Munición'),
+        inventory.map((m,i) => React.createElement('div', { key: i, className: 'py-2 border-b border-[#2d333b] text-xs' },
+          React.createElement('div', { className: 'flex justify-between' }, React.createElement('span', null, m.type + ' (' + m.caliber + 'mm)'), React.createElement('span', { className: m.qty<=m.min?'text-[#ef4444] font-bold':'text-[#2dd4bf]' }, m.qty)),
+          React.createElement('div', { className: 'text-[10px] text-[#8b949e]' }, 'Lote: ' + m.lot + ' | Mín: ' + m.min)
+        ))
+      )
+    )
+  );
+}
+
+// ==================== PROXMOX APP ====================
+function ProxmoxApp() {
+  const vms = [
+    { vmid: 100, name: 'ares-web', status: 'running', cpu: 12, mem: 8192, node: 'pve1' },
+    { vmid: 101, name: 'drev-engine', status: 'running', cpu: 34, mem: 4096, node: 'pve1' },
+    { vmid: 102, name: 'logistics-db', status: 'running', cpu: 8, mem: 16384, node: 'pve2' },
+    { vmid: 103, name: 'comms-gateway', status: 'stopped', cpu: 0, mem: 0, node: 'pve3' },
+    { vmid: 104, name: 'mumble-server', status: 'running', cpu: 5, mem: 2048, node: 'pve2' },
+    { vmid: 105, name: 'netdata-monitor', status: 'running', cpu: 3, mem: 1024, node: 'pve1' },
+  ];
+
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] text-[#e6edf3] flex flex-col' },
+    React.createElement('div', { className: 'flex items-center justify-between px-4 py-3 bg-[#161b22] border-b border-[#2d333b]' },
+      React.createElement('div', { className: 'flex items-center gap-3' },
+        React.createElement('span', { className: 'text-2xl' }, '🖥️'),
+        React.createElement('h2', { className: 'text-[#2dd4bf] font-rajdhani text-lg font-bold uppercase tracking-wider' }, 'Proxmox VE — 192.168.88.1')
+      ),
+      React.createElement('span', { className: 'px-3 py-1 rounded-full text-xs font-bold bg-[#2dd4bf20] text-[#2dd4bf]' }, 'CLÚSTER ONLINE')
+    ),
+    React.createElement('div', { className: 'flex-1 p-4 grid grid-cols-3 gap-3' },
+      vms.map(vm => React.createElement('div', { key: vm.vmid, className: 'bg-[#161b22] rounded-xl p-4 border', style: { borderColor: vm.status==='running'?'#2dd4bf40':'#2d333b' } },
+        React.createElement('div', { className: 'flex items-center justify-between mb-3' },
+          React.createElement('span', { className: 'font-bold' }, vm.name),
+          React.createElement('span', { className: `px-2 py-1 rounded-full text-[10px] font-bold ${vm.status==='running'?'bg-[#2dd4bf20] text-[#2dd4bf]':'bg-[#8b949e20] text-[#8b949e]'}` }, vm.status.toUpperCase())
+        ),
+        React.createElement('div', { className: 'text-xs text-[#8b949e] space-y-1' },
+          React.createElement('div', null, 'VMID: ' + vm.vmid + ' | Nodo: ' + vm.node),
+          React.createElement('div', null, 'CPU: ' + vm.cpu + '% | RAM: ' + vm.mem + 'MB')
+        )
+      ))
+    )
+  );
+}
+
+// ==================== SYSTEM MONITOR APP ====================
+function SystemMonitorApp() {
+  const [stats, setStats] = useState({ cpu: 23, ram: 42, disk: 67, net: 847, uptime: '3h 42m' });
+  useEffect(() => {
+    const i = setInterval(() => setStats({ cpu: Math.floor(Math.random()*40+5), ram: Math.floor(Math.random()*30+30), disk: 67, net: Math.floor(Math.random()*500+500), uptime: stats.uptime }), 2000);
+    return () => clearInterval(i);
+  }, []);
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] p-4 grid grid-cols-2 gap-4' },
+    [['CPU', stats.cpu+'%', '#3b82f6'],['RAM', stats.ram+'%', '#f59e0b'],['Disco', stats.disk+'%', '#8b5cf6'],['Red', stats.net+' pps', '#2dd4bf']].map(([label,val,color],i) =>
+      React.createElement('div', { key: i, className: 'bg-[#161b22] rounded-xl p-6 border border-[#2d333b] flex flex-col items-center justify-center' },
+        React.createElement('div', { className: 'text-xs text-[#8b949e] uppercase mb-2' }, label),
+        React.createElement('div', { className: 'text-3xl font-bold', style:{color} }, val)
+      )
+    )
+  );
+}
+
+// ==================== FILES APP ====================
+function FilesApp() {
+  const [path, setPath] = useState('/home/santa-barbara');
+  const files = {
+    '/': ['home','etc','opt','var','mnt','tmp'],
+    '/home': ['santa-barbara'],
+    '/home/santa-barbara': ['documentos','descargas','workspace','SOUL.md','TOOLS.md','USER.md'],
+    '/etc': ['ares.conf','hostname'],
+    '/opt': ['drev','ghidra','ares'],
+    '/opt/drev': ['config.json','munitions.json','ballistic_gui.py','tables'],
+  };
+  const currentFiles = files[path] || [];
+  return React.createElement('div', { className: 'h-full bg-[#0d1117] text-[#e6edf3] flex flex-col' },
+    React.createElement('div', { className: 'flex items-center gap-2 px-3 py-2 bg-[#161b22] border-b border-[#2d333b] text-xs' },
+      React.createElement('button', { onClick: () => { let parts=path.split('/').filter(Boolean); parts.pop(); setPath('/'+parts.join('/')); }, className: 'text-[#2dd4bf] hover:underline', disabled: path==='/' }, '⬆'),
+      React.createElement('span', { className: 'text-[#8b949e] font-mono' }, path)
+    ),
+    React.createElement('div', { className: 'flex-1 p-3 grid grid-cols-4 gap-2' },
+      currentFiles.map(f => React.createElement('div', { key: f, className: 'p-3 rounded-lg bg-[#161b22] border border-[#2d333b] cursor-pointer hover:bg-[#2d333b] text-center text-xs',
+        onClick: () => { let newPath = path==='/' ? '/'+f : path+'/'+f; if (files[newPath]) setPath(newPath); } },
+        React.createElement('div', { className: 'text-2xl mb-2' }, files[path+'/'+f] ? '📁' : '📄'),
+        React.createElement('div', { className: 'truncate text-[#e6edf3]' }, f)
+      ))
+    )
+  );
+}
+
+// ==================== WINDOW COMPONENT ====================
+function WindowFrame({ win, children }) {
+  const { activeWindowId, focusWindow, closeWindow, minimizeWindow, maximizeWindow } = useOSStore();
+  const isActive = activeWindowId === win.id;
+  const [drag, setDrag] = useState({ active: false, startX: 0, startY: 0, origX: 0, origY: 0 });
+
+  const onMouseDown = (e) => {
+    focusWindow(win.id);
+    e.stopPropagation();
+    if (e.target.closest('.window-header')) {
+      setDrag({ active: true, startX: e.clientX, startY: e.clientY, origX: win.x, origY: win.y });
+    }
+  };
+
+  useEffect(() => {
+    const move = (e) => {
+      if (!drag.active) return;
+      const maxX = window.innerWidth - 200;
+      const maxY = window.innerHeight - 56;
+      useOSStore.setState(s => ({
+        windows: s.windows.map(w => w.id === win.id ? { ...w, x: Math.max(0, Math.min(maxX, drag.origX + e.clientX - drag.startX)), y: Math.max(0, Math.min(maxY, drag.origY + e.clientY - drag.startY)) } : w)
+      }));
+    };
+    const up = () => setDrag(prev => ({ ...prev, active: false }));
+    if (drag.active) { window.addEventListener('mousemove', move); window.addEventListener('mouseup', up); }
+    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
+  }, [drag]);
+
+  if (win.minimized) return null;
+
+  const style = win.maximized
+    ? { top: 0, left: 0, width: '100%', height: 'calc(100% - 48px)', zIndex: win.zIndex }
+    : { top: win.y, left: win.x, width: win.width, height: win.height, zIndex: win.zIndex };
+
+  return React.createElement('div', { className: 'window-frame', style, onMouseDown },
+    React.createElement('div', { className: 'window-header' },
+      React.createElement('span', { className: 'window-title' }, win.title),
+      React.createElement('div', { className: 'window-controls' },
+        React.createElement('button', { className: 'window-btn min', onClick: () => minimizeWindow(win.id) }),
+        React.createElement('button', { className: 'window-btn max', onClick: () => maximizeWindow(win.id) }),
+        React.createElement('button', { className: 'window-btn close', onClick: () => closeWindow(win.id) })
+      )
+    ),
+    React.createElement('div', { className: 'window-body' }, children)
+  );
+}
+
+// ==================== APP ROUTER ====================
+function AppContent({ win }) {
+  switch (win.appId) {
+    case 'terminal': return React.createElement(TerminalApp, { winId: win.id });
+    case 'drev-lab': return React.createElement(DrevLabApp);
+    case 'santa-barbara': return React.createElement(SantaBarbaraApp);
+    case 'logistics': return React.createElement(LogisticsApp);
+    case 'proxmox': return React.createElement(ProxmoxApp);
+    case 'system-monitor': return React.createElement(SystemMonitorApp);
+    case 'files': return React.createElement(FilesApp);
+    default: return React.createElement('div', { className: 'h-full flex items-center justify-center text-[#8b949e]' }, APP_ICONS[win.appId] + ' ' + win.appId + ' — Funcionalidad integrada');
+  }
+}
+
+// ==================== DESKTOP ====================
+function Desktop() {
+  const { windows, showStartMenu, toggleStartMenu, openWindow, focusWindow, closeWindow, minimizeWindow, maximizeWindow, activeWindowId } = useOSStore();
+  const taskbarWindows = windows.filter(w => !w.minimized);
+
+  return React.createElement('div', { className: 'h-screen w-screen relative', style: { background: 'radial-gradient(ellipse at center, #1a1f2e 0%, #0d1117 70%)' } },
+    // Desktop icons
+    React.createElement('div', { className: 'absolute top-8 left-8 flex flex-col gap-6' },
+      [ ['drev-lab','DREV Lab','🎯'], ['santa-barbara','Santa Bárbara','📡'], ['logistics','Logística','🚛'], ['terminal','Terminal','⬛'], ['files','Archivos','📁'], ['proxmox','Proxmox','🖥️'] ].map(([id,label,icon]) =>
+        React.createElement('div', { key: id, className: 'flex flex-col items-center cursor-pointer group', onDoubleClick: () => openWindow(id, { title: label }) },
+          React.createElement('div', { className: 'text-3xl group-hover:scale-110 transition-transform' }, icon),
+          React.createElement('span', { className: 'text-xs text-[#e6edf3] mt-1 px-2 py-0.5 rounded group-hover:bg-[#2dd4bf20]' }, label)
+        )
+      )
+    ),
+
+    // Windows
+    windows.filter(w => !w.minimized).map(win =>
+      React.createElement(WindowFrame, { key: win.id, win },
+        React.createElement(AppContent, { win })
+      )
+    ),
+
+    // Start Menu
+    showStartMenu && React.createElement('div', { className: 'start-menu open' },
+      Object.entries(APP_CATEGORIES).map(([cat, apps]) =>
+        React.createElement('div', { key: cat },
+          React.createElement('div', { className: 'text-[10px] font-bold text-[#64748b] uppercase px-2 py-1' }, cat),
+          React.createElement('div', { className: 'start-app-grid' },
+            apps.map(id => React.createElement('div', { key: id, className: 'start-app-item', onClick: () => { openWindow(id, { title: id.replace(/-/g,' ') }); toggleStartMenu(); } },
+              React.createElement('span', { className: 'app-icon' }, APP_ICONS[id] || '📦'),
+              React.createElement('span', null, id.replace(/-/g,' '))
+            ))
+          )
+        )
+      )
+    ),
+
+    // Taskbar
+    React.createElement('div', { className: 'taskbar' },
+      React.createElement('button', { onClick: toggleStartMenu, className: 'text-xl px-3 hover:bg-[#2dd4bf20] rounded-lg transition-colors', style:{background:showStartMenu?'rgba(45,212,191,.15)':''} }, '⬛'),
+      React.createElement('div', { className: 'taskbar-center' },
+        taskbarWindows.map(win => React.createElement('div', { key: win.id, className: `taskbar-icon ${activeWindowId===win.id?'active':''}`, onClick: () => focusWindow(win.id) }, APP_ICONS[win.appId] || '📦'))
+      ),
+      React.createElement('div', { className: 'taskbar-right' },
+        React.createElement('span', null, '🌐 GW:192.168.88.1'),
+        React.createElement('span', null, '🔒 VPN'),
+        React.createElement('span', { className: 'font-mono' }, new Date().toLocaleTimeString('en-GB', { hour12: false }) + ' UTC')
+      )
+    )
+  );
+}
+
+// ==================== LOGIN SCREEN ====================
+function LoginScreen() {
+  const { login } = useOSStore();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState('operator');
+  const [host, setHost] = useState('localhost');
+  const [bootLines, setBootLines] = useState([]);
+  const [phase, setPhase] = useState('booting');
+
+  useEffect(() => {
+    const bootSequence = [
+      { text: '[BOOT] ARES KERNEL v5.15.0-ares-sb #1 SMP', delay: 200 },
+      { text: 'Loading essential drivers...', delay: 300 },
+      { text: 'Mounting virtual filesystems...', delay: 400 },
+      { text: 'Initializing Santa Barbara root partition...', delay: 500 },
+      { text: 'Network interface eth0: 192.168.88.10/24 [OK]', delay: 600 },
+      { text: 'DNS resolver: 1.1.1.1 [OK]', delay: 300 },
+      { text: 'Proxmox VE cluster gateway: 192.168.88.1 [OK]', delay: 400 },
+      { text: 'rclone mount verified [OK]', delay: 300 },
+      { text: 'VPN tunnel established (WireGuard) [OK]', delay: 500 },
+      { text: 'System ready. Welcome to ARES OS.', delay: 600 },
+    ];
+    let i = 0;
+    const timer = setInterval(() => {
+      if (i < bootSequence.length) { setBootLines(prev => [...prev, bootSequence[i].text]); i++; }
+      else { clearInterval(timer); setTimeout(() => setPhase('login'), 500); }
+    }, 200);
+    return () => clearInterval(timer);
+  }, []);
+
+  const handleLogin = () => login({ username: username || 'Santa Barbara', role });
+
+  return React.createElement('div', { className: 'login-container' },
+    phase === 'booting' ? React.createElement('div', { className: 'login-terminal' },
+      bootLines.map((line, i) => React.createElement('div', { key: i, style: { animation: 'fadeIn .3s' } }, line)),
+      React.createElement('div', { className: 'mt-4 animate-pulse' }, '▊')
+    ) : React.createElement('div', { className: 'login-panel' },
+      React.createElement('div', { className: 'text-4xl mb-4' }, '🔴'),
+      React.createElement('h1', { className: 'text-[#2dd4bf] font-rajdhani text-2xl font-bold uppercase tracking-widest mb-2' }, 'ARES OS'),
+      React.createElement('p', { className: 'text-[#8b949e] text-sm mb-6' }, 'Sistema de Artillería de Campaña'),
+      React.createElement('input', { value: username, onChange: e => setUsername(e.target.value), placeholder: 'Usuario (root: Santa Barbara)' }),
+      React.createElement('input', { type: 'password', value: password, onChange: e => setPassword(e.target.value), placeholder: 'Contraseña', onKeyPress: e => e.key==='Enter'&&handleLogin() }),
+      React.createElement('select', { value: role, onChange: e => setRole(e.target.value) },
+        React.createElement('option', { value: 'root' }, 'Root'), React.createElement('option', { value: 'admin' }, 'Admin'),
+        React.createElement('option', { value: 'operator' }, 'Operator'), React.createElement('option', { value: 'guest' }, 'Guest')
+      ),
+      React.createElement('select', { value: host, onChange: e => setHost(e.target.value) },
+        React.createElement('option', { value: 'localhost' }, 'Servidor Local'), React.createElement('option', { value: 'remote' }, 'Servidor Remoto (192.168.88.1)')
+      ),
+      React.createElement('button', { onClick: handleLogin, className: 'login-btn' }, 'AUTENTICAR'),
+      React.createElement('div', { className: 'mt-3 text-[10px] text-[#8b949e]' }, 'GW: 192.168.88.1 | DNS: 1.1.1.1 | VPN: WireGuard')
+    )
+  );
+}
+
+// ==================== MAIN APP ====================
+function AresOS() {
+  const { isAuthenticated } = useOSStore();
+  return isAuthenticated ? React.createElement(Desktop) : React.createElement(LoginScreen);
+}
+
+// ==================== RENDER ====================
+const root = createRoot(document.getElementById('root'));
+root.render(React.createElement(AresOS));
+</script>
+</body>
+</html>

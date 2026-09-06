@@ -1,0 +1,8 @@
+{
+    "wolf.disableHotModeWarning": true,
+    "workbench.editor.autoLockGroups": {
+        "workbench.editor.chatSession": true,
+        "chatgpt.conversationEditor": true,
+        "agentSessionsWelcomePage": true
+    }
+}
